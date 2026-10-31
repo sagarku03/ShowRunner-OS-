@@ -1,0 +1,6 @@
+{
+  "name": "ShowRunner OS v1.3",
+  "description": "Edge-native mobile cognitive script, phonetic audio, and visual prompt preparation engine with SQLite WAL persistence and 17-point verification.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
