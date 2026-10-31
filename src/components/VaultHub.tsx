@@ -49,6 +49,7 @@ interface VaultHubProps {
   masterPromptState: MasterPromptState | null;
   llmHealth: LlmHealthData | null;
   onRefreshState: () => Promise<void>;
+  onNavigateHub?: (hub: 'vault' | 'topics' | 'studio' | 'script' | 'export') => void;
   onNotify: (msg: string, tone?: 'success' | 'warn' | 'error', err?: unknown) => void;
 }
 
@@ -82,6 +83,7 @@ export const VaultHub: React.FC<VaultHubProps> = ({
   masterPromptState,
   llmHealth,
   onRefreshState,
+  onNavigateHub,
   onNotify,
 }) => {
   const [rawKey, setRawKey] = useState('');
@@ -1195,6 +1197,7 @@ export const VaultHub: React.FC<VaultHubProps> = ({
           onLocked={async () => {
             await onRefreshState();
           }}
+          onJumpToExpress={() => onNavigateHub?.('script')}
           onNotify={onNotify}
         />
       )}

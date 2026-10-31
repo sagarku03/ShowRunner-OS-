@@ -822,7 +822,7 @@ export class FakeGeminiGateway implements GeminiGateway {
         phaseName: `Phase ${idx + 1}`,
         primaryClaimId: 'ev-1',
         counterpointClaimId: 'ev-2',
-        somaticFrictionCue: 'Sudden drop in core temperature and pulse cadence.',
+        emotionalFrictionCue: 'Sudden drop in core temperature and pulse cadence.',
       }));
       const data = { chapters, metaphorCandidates, cognitiveAnchors };
       return {
@@ -886,7 +886,7 @@ export class FakeGeminiGateway implements GeminiGateway {
       const data = {
         fleschKincaidAsrScore: 90,
         hook15sScore: 92,
-        somaticFrictionScore: 89,
+        emotionalEngagementScore: 89,
         visualGroundingScore: 91,
         noHallucinatedCitations: true,
         critique: 'All semantic checks verified against grounded evidence.',

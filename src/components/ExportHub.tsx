@@ -32,8 +32,21 @@ export const ExportHub: React.FC<ExportHubProps> = ({
   onRefreshState,
   onNotify,
 }) => {
-  const s6Payload = (stateVector?.context?.S6?.payload as S6StagePayload | null) ?? null;
-  const s7Payload = (stateVector?.context?.S7?.payload as S7StagePayload | null) ?? null;
+  const s4Payload = (stateVector?.context?.S4?.payload as {
+    meta?: { precisionGrade?: string; hasEstimatedWords?: boolean };
+  } | null) ?? null;
+  const rawS5 = (stateVector?.context?.S5?.payload as { slots?: unknown[] } | null) ?? null;
+  const s5Payload = rawS5 && Array.isArray(rawS5.slots) ? rawS5 : null;
+  const rawS6 = (stateVector?.context?.S6?.payload as S6StagePayload | null) ?? null;
+  const s6Payload =
+    rawS6 && (Array.isArray(rawS6.batches) || Array.isArray(rawS6.packs)) ? rawS6 : null;
+  const rawS7 = (stateVector?.context?.S7?.payload as S7StagePayload | null) ?? null;
+  const s7Payload =
+    rawS7 && Array.isArray(rawS7.variants) && rawS7.emri ? rawS7 : null;
+
+  const isEstimatedTiming =
+    s4Payload?.meta?.precisionGrade === 'CUE_INTERPOLATED' ||
+    Boolean(s4Payload?.meta?.hasEstimatedWords);
 
   const [generatingPrompts, setGeneratingPrompts] = useState(false);
   const [pushingPack, setPushingPack] = useState<number | null>(null);
@@ -120,33 +133,46 @@ export const ExportHub: React.FC<ExportHubProps> = ({
     <div className="space-y-5 pb-28">
       {/* STAGE 6: 30-PROMPT BATCHES & 100-PROMPT PACKS */}
       <section className="liquid-glass p-5 space-y-4">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between gap-2 flex-wrap">
           <div className="flex items-center gap-2.5">
             <div className="w-9 h-9 rounded-2xl bg-violet-500/15 border border-violet-500/30 flex items-center justify-center text-violet-400">
               <Layers className="w-4 h-4" />
             </div>
             <div>
               <h2 className="text-base font-semibold text-white">Visual Prompt Packs</h2>
-              <p className="text-xs text-slate-400">30-Prompt Batches & 100-Prompt Packs</p>
+              <p className="text-xs text-slate-400">30-Prompt Batches &amp; 100-Prompt Packs</p>
             </div>
           </div>
 
-          <span
-            className={`px-2.5 py-1 rounded-xl font-mono text-[11px] border ${
-              wsConnected
-                ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
-                : 'bg-slate-800 text-slate-400 border-white/10'
-            }`}
-          >
-            {wsConnected ? 'Bridge Connected' : 'Bridge Standby'}
-          </span>
+          <div className="flex items-center gap-1.5">
+            {isEstimatedTiming && (
+              <span className="px-2 py-0.5 rounded-lg font-mono text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40">
+                ESTIMATED
+              </span>
+            )}
+            <span
+              className={`px-2.5 py-1 rounded-xl font-mono text-[11px] border ${
+                wsConnected
+                  ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
+                  : 'bg-slate-800 text-slate-400 border-white/10'
+              }`}
+            >
+              {wsConnected ? 'Bridge Connected' : 'Bridge Standby'}
+            </span>
+          </div>
         </div>
+
+        {!s5Payload && (
+          <div className="text-xs text-amber-300 bg-amber-500/10 border border-amber-500/20 px-3 py-2 rounded-xl">
+            Slice the Storyboard in the Script/Transcript hub first to enable Visual Prompts.
+          </div>
+        )}
 
         <button
           type="button"
           onClick={handleGeneratePrompts}
-          disabled={generatingPrompts || !activeProject}
-          className="w-full py-3.5 rounded-2xl bg-violet-500 hover:bg-violet-400 disabled:opacity-40 text-white font-semibold text-xs flex items-center justify-center gap-2 active:scale-[0.97]"
+          disabled={generatingPrompts || !activeProject || !s5Payload}
+          className="w-full min-h-[44px] py-3.5 rounded-2xl bg-violet-500 hover:bg-violet-400 disabled:opacity-40 text-white font-semibold text-xs flex items-center justify-center gap-2 active:scale-[0.97]"
         >
           <Sparkles className="w-4 h-4" />
           {generatingPrompts ? 'Translating Visual Prompts...' : 'Generate Visual Prompts & Batches'}
@@ -154,6 +180,11 @@ export const ExportHub: React.FC<ExportHubProps> = ({
 
         {s6Payload && (
           <div className="space-y-3 pt-1">
+            {s6Payload.styleSource === 'NEUTRAL_DEFAULT' && (
+              <div className="px-3 py-1.5 rounded-xl bg-amber-500/10 border border-amber-500/25 text-[11px] text-amber-200 font-mono">
+                Default style – set DNA to customise
+              </div>
+            )}
             <div className="flex items-center justify-between text-xs text-slate-300">
               <span>
                 Total Prompts: <strong className="text-white">{s6Payload.totalPrompts}</strong>
@@ -199,7 +230,7 @@ export const ExportHub: React.FC<ExportHubProps> = ({
               <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
                 100-Prompt Pack Files
               </div>
-              {s6Payload.packs.map((pack) => (
+              {(s6Payload.packs || []).map((pack) => (
                 <div
                   key={pack.packIndex}
                   className="liquid-glass-subtle p-3 flex items-center justify-between gap-2"
@@ -241,29 +272,42 @@ export const ExportHub: React.FC<ExportHubProps> = ({
 
       {/* STAGE 7: 3-PACK PACKAGING ENGINE, EMRI GATE (<20) & BUNDLE ARCHIVE */}
       <section className="liquid-glass p-5 space-y-4">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between gap-2 flex-wrap">
           <div className="flex items-center gap-2.5">
             <div className="w-9 h-9 rounded-2xl bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center text-emerald-400">
               <PackageCheck className="w-4 h-4" />
             </div>
             <div>
-              <h2 className="text-base font-semibold text-white">Packaging & Master Bundle</h2>
+              <h2 className="text-base font-semibold text-white">Packaging &amp; Master Bundle</h2>
               <p className="text-xs text-slate-400">3 Packs (A/B/C) + Resonance Gate (&lt; 20)</p>
             </div>
           </div>
 
-          {s7Payload && (
-            <span className="px-2.5 py-1 rounded-xl font-mono text-[11px] font-semibold bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
-              EMRI {s7Payload.emri.emriScore.toFixed(1)}
-            </span>
-          )}
+          <div className="flex items-center gap-1.5">
+            {isEstimatedTiming && (
+              <span className="px-2 py-0.5 rounded-lg font-mono text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40">
+                ESTIMATED
+              </span>
+            )}
+            {s7Payload && (
+              <span className="px-2.5 py-1 rounded-xl font-mono text-[11px] font-semibold bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
+                EMRI {s7Payload.emri.emriScore.toFixed(1)}
+              </span>
+            )}
+          </div>
         </div>
+
+        {!s6Payload && (
+          <div className="text-xs text-amber-300 bg-amber-500/10 border border-amber-500/20 px-3 py-2 rounded-xl">
+            Generate Visual Prompts &amp; Batches above first to unlock 3-Pack Packaging.
+          </div>
+        )}
 
         <button
           type="button"
           onClick={handleGeneratePackaging}
           disabled={generatingPackaging || !s6Payload}
-          className="w-full py-3.5 rounded-2xl bg-emerald-500 hover:bg-emerald-400 disabled:opacity-40 text-slate-950 font-semibold text-xs flex items-center justify-center gap-2 active:scale-[0.97]"
+          className="w-full min-h-[44px] py-3.5 rounded-2xl bg-emerald-500 hover:bg-emerald-400 disabled:opacity-40 text-slate-950 font-semibold text-xs flex items-center justify-center gap-2 active:scale-[0.97]"
         >
           <Sparkles className="w-4 h-4" />
           {generatingPackaging ? 'Building 3 Packs & Computing Resonance...' : 'Generate 3 Packaging Variants & SEO'}
@@ -340,11 +384,11 @@ export const ExportHub: React.FC<ExportHubProps> = ({
               <div className="flex items-center justify-between text-[11px] text-slate-400">
                 <span className="font-semibold text-white">Above-the-Fold Description</span>
                 <span className="font-mono">
-                  {s7Payload.seoMatrix.aboveTheFoldDescription.length}/150 chars
+                  {(s7Payload.seoMatrix?.aboveTheFoldDescription || '').length}/150 chars
                 </span>
               </div>
               <p className="text-xs text-slate-200">
-                {s7Payload.seoMatrix.aboveTheFoldDescription}
+                {s7Payload.seoMatrix?.aboveTheFoldDescription}
               </p>
 
               <div className="pt-2 border-t border-white/10 space-y-1">

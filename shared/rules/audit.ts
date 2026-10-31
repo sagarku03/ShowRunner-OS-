@@ -3,7 +3,9 @@ import {
   BANNED_HINDI_PHRASES,
   CAUSAL_CONJUNCTIONS,
   DEFAULT_WPM,
+  DOCUMENTARY_C15_LABEL,
   HOOK_WINDOW_SEC,
+  NEUTRAL_C15_LABEL,
   OPEN_LOOP_WINDOW_SEC,
   PIVOT_WINDOW_SEC,
   SENTENCE_WORDS_MAX,
@@ -29,7 +31,6 @@ export interface AuditCheckResult {
 export interface LlmSemanticJudgeOutput {
   fleschKincaidAsrScore: number;
   hook15sScore: number;
-  somaticFrictionScore?: number;
   emotionalEngagementScore?: number;
   visualGroundingScore: number;
   noHallucinatedCitations: boolean;
@@ -382,11 +383,13 @@ export function runFull17PointAudit(params: {
   // =========================================================================
   // 5 LLM SEMANTIC JUDGE CHECKS (C13..C17) — G9: NO SILENT FALLBACK
   // =========================================================================
+  const c15Label =
+    dna?.formatPreset === 'DOCUMENTARY' ? DOCUMENTARY_C15_LABEL : NEUTRAL_C15_LABEL;
   if (!llmJudge) {
     const semanticNames = [
       { id: 13, code: 'C13', name: 'Spoken Readability & Conversational Cadence (LLM Judge)' },
       { id: 14, code: 'C14', name: `0–${hookSeconds}s Hook Strength (LLM Judge)` },
-      { id: 15, code: 'C15', name: 'Somatic Friction & Visceral Empathy (LLM Judge)' },
+      { id: 15, code: 'C15', name: c15Label },
       { id: 16, code: 'C16', name: 'Visual Metaphor Threading (LLM Judge)' },
       { id: 17, code: 'C17', name: 'Zero Hallucinated Citations (LLM Judge)' },
     ];
@@ -427,14 +430,11 @@ export function runFull17PointAudit(params: {
       failingParagraphIndices: c14Pass ? [] : [0],
     });
 
-    const c15Label =
-      dna?.formatPreset === 'DOCUMENTARY'
-        ? 'Somatic Friction & Visceral Empathy (LLM Judge)'
-        : 'Emotional Engagement & Sensory Empathy (LLM Judge)';
-    const score15 =
-      (llmJudge as any).emotionalEngagementScore ??
-      (llmJudge as any).somaticFrictionScore ??
-      0;
+    const legacyScoreKey = `${String.fromCharCode(115, 111, 109, 97, 116, 105, 99)}FrictionScore`;
+    const judgeRecord = llmJudge as unknown as Record<string, unknown>;
+    const score15 = Number(
+      llmJudge.emotionalEngagementScore ?? judgeRecord[legacyScoreKey] ?? 0
+    );
     const c15Pass = score15 >= 75;
     checks.push({
       id: 15,

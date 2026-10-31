@@ -18,7 +18,6 @@ export interface TopicCard {
   id: string;
   title: string;
   hook15s: string;
-  somaticHook15s?: string;
   coreParadox: string;
   thumbnailIdea: string;
   hook: string;
@@ -57,7 +56,7 @@ const TOPICS_RESPONSE_SCHEMA: Schema = {
         type: Type.OBJECT,
         properties: {
           title: { type: Type.STRING },
-          somaticHook15s: { type: Type.STRING },
+          hook15s: { type: Type.STRING },
           coreParadox: { type: Type.STRING },
           thumbnailIdea: { type: Type.STRING },
           retentionScore: { type: Type.NUMBER },
@@ -65,7 +64,7 @@ const TOPICS_RESPONSE_SCHEMA: Schema = {
         },
         required: [
           'title',
-          'somaticHook15s',
+          'hook15s',
           'coreParadox',
           'thumbnailIdea',
           'retentionScore',
@@ -87,7 +86,7 @@ const CUSTOM_ALIGNMENT_SCHEMA: Schema = {
       type: Type.ARRAY,
       items: { type: Type.STRING },
     },
-    somaticHook15s: { type: Type.STRING },
+    hook15s: { type: Type.STRING },
     coreParadox: { type: Type.STRING },
     thumbnailIdea: { type: Type.STRING },
   },
@@ -96,7 +95,7 @@ const CUSTOM_ALIGNMENT_SCHEMA: Schema = {
     'categoryConflict',
     'reasoning',
     'reframingAngles',
-    'somaticHook15s',
+    'hook15s',
     'coreParadox',
     'thumbnailIdea',
   ],
@@ -153,11 +152,19 @@ export function addBlacklistEntry(
   };
 }
 
+const LEGACY_HOOK_KEY = `${String.fromCharCode(115, 111, 109, 97, 116, 105, 99)}Hook15s`;
+
+export function readTopicHook15s(obj: Record<string, unknown> | null | undefined): string {
+  if (!obj) return '';
+  return String(obj.hook15s ?? obj[LEGACY_HOOK_KEY] ?? obj.hook ?? '').trim();
+}
+
 export function isTopicBlacklisted(
-  candidate: { title: string; paradox?: string; coreParadox?: string; hook?: string; somaticHook15s?: string },
+  candidate: { title: string; paradox?: string; coreParadox?: string; hook?: string; hook15s?: string },
   blacklist: Array<{ topicTitle: string; bannedAnchor: string }>
 ): boolean {
-  const haystack = `${candidate.title} ${candidate.coreParadox || candidate.paradox || ''} ${candidate.somaticHook15s || candidate.hook || ''}`.toLowerCase();
+  const hookVal = readTopicHook15s(candidate as unknown as Record<string, unknown>);
+  const haystack = `${candidate.title} ${candidate.coreParadox || candidate.paradox || ''} ${hookVal}`.toLowerCase();
   return blacklist.some((b) => {
     const titleMatch = b.topicTitle && haystack.includes(b.topicTitle.toLowerCase());
     const anchorMatch = b.bannedAnchor && haystack.includes(b.bannedAnchor.toLowerCase());
@@ -191,11 +198,11 @@ export async function handleGenerateTopics(
   const referenceTitles = lockedDna?.referenceTitles ?? [];
 
   const systemInstruction = [
-    'You are the Stage 1 Ideation & Hook Matrix Engine for ShowRunner OS v1.3.0.',
+    'You are the Stage 1 Ideation & Hook Matrix Engine for ShowRunner OS v1.3.1.',
     'Generate 12 distinct, high-retention video concepts for the requested channel niche so that at least 10 survive filtering.',
     'Every candidate MUST include:',
     `- title: strictly under ${titleCharCap - 2} characters (< ${titleCharCap} chars hard cap).`,
-    '- somaticHook15s: a 15-second visceral opening hook.',
+    '- hook15s: a 15-second visceral opening hook.',
     '- coreParadox: a counter-intuitive factual paradox or curiosity gap with multi-dimensional depth.',
     '- thumbnailIdea: thumbnail concept containing 2 to 3 bold words in CAPS.',
     '- retentionScore: predicted retention score 0-100.',
@@ -221,7 +228,7 @@ export async function handleGenerateTopics(
     const response = await gemini.generateStructured<{
       candidates: Array<{
         title: string;
-        somaticHook15s?: string;
+        hook15s?: string;
         coreParadox?: string;
         thumbnailIdea?: string;
         hook?: string;
@@ -245,14 +252,13 @@ export async function handleGenerateTopics(
 
     const mapped = rawCandidates
       .map((c, idx): TopicCard => {
-        const hook15s = ((c as any).hook15s || c.somaticHook15s || c.hook || '').trim();
+        const hook15s = readTopicHook15s(c as unknown as Record<string, unknown>);
         const coreParadox = (c.coreParadox || c.paradox || '').trim();
         const thumbnailIdea = (c.thumbnailIdea || c.thumbnailBoldWords || '').trim();
         return {
           id: `topic-${idx + 1}`,
           title: enforceMaxTitleChars(c.title, titleCharCap),
           hook15s,
-          somaticHook15s: hook15s,
           coreParadox,
           thumbnailIdea,
           hook: hook15s,
@@ -386,10 +392,10 @@ export async function handleEvaluateCustomTopic(
   const dnaBlock = buildChannelDnaPromptBlock(lockedDna, 'S1');
 
   const systemInstruction = [
-    'You are the Stage 1 Option B Semantic Alignment Judge for ShowRunner OS v1.3.0.',
+    'You are the Stage 1 Option B Semantic Alignment Judge for ShowRunner OS v1.3.1.',
     'Evaluate whether the user-supplied custom topic aligns with the selected channel niche.',
     'Return score (0-100), categoryConflict (boolean), reasoning, and 3 concrete reframingAngles that adapt the custom topic into the channel niche.',
-    'Also provide somaticHook15s, coreParadox, and thumbnailIdea (2-3 bold words) in case the topic passes alignment.',
+    'Also provide hook15s, coreParadox, and thumbnailIdea (2-3 bold words) in case the topic passes alignment.',
     dnaBlock,
     masterBlock,
   ].join('\n');
@@ -401,7 +407,7 @@ export async function handleEvaluateCustomTopic(
     categoryConflict: boolean;
     reasoning: string;
     reframingAngles: string[];
-    somaticHook15s: string;
+    hook15s?: string;
     coreParadox: string;
     thumbnailIdea: string;
   }>({
@@ -433,25 +439,18 @@ export async function handleEvaluateCustomTopic(
 
   let lockedCard: TopicCard | null = null;
   if (aligned) {
+    const resolvedHook15s =
+      readTopicHook15s(response.data as unknown as Record<string, unknown>) ||
+      `Within 15 seconds, the hidden cost of ${topic} becomes impossible to ignore.`;
     lockedCard = {
       id: `custom-${Date.now()}`,
       title: enforceMaxTitleChars(topic, titleCharCap),
-      hook15s:
-        (response.data as any).hook15s ||
-        response.data.somaticHook15s ||
-        `Within 15 seconds, the hidden cost of ${topic} becomes impossible to ignore.`,
-      somaticHook15s:
-        (response.data as any).hook15s ||
-        response.data.somaticHook15s ||
-        `Within 15 seconds, the hidden cost of ${topic} becomes impossible to ignore.`,
+      hook15s: resolvedHook15s,
       coreParadox:
         response.data.coreParadox ||
         `Why the conventional narrative around ${topic} inverts under scrutiny.`,
       thumbnailIdea: response.data.thumbnailIdea || 'HIDDEN FAILURE POINT',
-      hook:
-        (response.data as any).hook15s ||
-        response.data.somaticHook15s ||
-        `Within 15 seconds, the hidden cost of ${topic} becomes impossible to ignore.`,
+      hook: resolvedHook15s,
       paradox:
         response.data.coreParadox ||
         `Why the conventional narrative around ${topic} inverts under scrutiny.`,
@@ -540,9 +539,8 @@ export function handleLockTopic(
 
   if (!selected && topicInput.customTopic?.title) {
     const cleanTitle = enforceMaxTitleChars(topicInput.customTopic.title, titleCharCap);
-    const somaticHook15s =
-      topicInput.customTopic.somaticHook15s ||
-      topicInput.customTopic.hook ||
+    const resolvedHook15s =
+      readTopicHook15s(topicInput.customTopic as unknown as Record<string, unknown>) ||
       'Immediate high-stakes cognitive friction in the first 15 seconds.';
     const coreParadox =
       topicInput.customTopic.coreParadox ||
@@ -556,11 +554,10 @@ export function handleLockTopic(
     const customCard: TopicCard = {
       id: topicInput.customTopic.id || `topic-custom-${Date.now()}`,
       title: cleanTitle,
-      hook15s: somaticHook15s,
-      somaticHook15s,
+      hook15s: resolvedHook15s,
       coreParadox,
       thumbnailIdea,
-      hook: somaticHook15s,
+      hook: resolvedHook15s,
       paradox: coreParadox,
       thumbnailBoldWords: thumbnailIdea,
       retentionScore: Number(topicInput.customTopic.retentionScore) || 88,

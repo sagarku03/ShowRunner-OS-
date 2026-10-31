@@ -314,7 +314,7 @@ export default function App() {
                   ShowRunner OS
                 </h1>
                 <span className="font-mono text-[10px] px-1.5 py-0.5 rounded-md bg-white/10 text-emerald-400">
-                  v1.3
+                  v1.3.1
                 </span>
               </div>
               <p className="text-[11px] text-slate-400 truncate">
@@ -331,7 +331,7 @@ export default function App() {
                 aria-label="Select Project"
                 value={activeProject?.id ?? ''}
                 onChange={(e) => handleSwitchProject(e.target.value)}
-                className="max-w-[130px] px-2.5 py-1.5 rounded-xl bg-slate-900/90 border border-white/10 text-xs text-white truncate"
+                className="max-w-[120px] px-2 py-1.5 rounded-xl bg-slate-900/90 border border-white/10 text-xs text-white truncate"
               >
                 {projects.map((p) => (
                   <option key={p.id} value={p.id}>
@@ -340,6 +340,20 @@ export default function App() {
                 ))}
               </select>
             )}
+            <button
+              type="button"
+              onClick={() => {
+                if (!activeProject) {
+                  setNewProjEntryMode('EXPRESS');
+                  setShowNewProjectModal(true);
+                } else {
+                  setActiveHub('script');
+                }
+              }}
+              className="px-2.5 py-1.5 rounded-xl bg-violet-500/15 hover:bg-violet-500/25 text-violet-300 border border-violet-500/30 text-xs font-semibold flex items-center gap-1 active:scale-[0.97]"
+            >
+              <span>Import transcript</span>
+            </button>
             <button
               type="button"
               onClick={() => setShowNewProjectModal(true)}
@@ -431,21 +445,35 @@ export default function App() {
           <div className="liquid-glass p-5 mb-5 space-y-3 border-emerald-500/30">
             <div className="flex items-center gap-2 text-emerald-400 text-xs font-semibold">
               <Sparkles className="w-4 h-4" />
-              <span>Welcome to ShowRunner OS v1.3</span>
+              <span>Welcome to ShowRunner OS v1.3.1</span>
             </div>
             <p className="text-xs text-slate-300 leading-relaxed">
-              Create your first production project to initialize the SQLite state machine,
-              Channel DNA Style Lock, WPM word-budget engine, and 17-point verification
-              pipeline.
+              Create a full pre-production project or jump straight into Express Transcript Mode
+              if you already recorded your voiceover.
             </p>
-            <button
-              type="button"
-              onClick={() => setShowNewProjectModal(true)}
-              className="w-full py-3 rounded-2xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-semibold text-xs flex items-center justify-center gap-1.5 active:scale-[0.97]"
-            >
-              <FolderPlus className="w-4 h-4" />
-              Create First Project
-            </button>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              <button
+                type="button"
+                onClick={() => {
+                  setNewProjEntryMode('FULL');
+                  setShowNewProjectModal(true);
+                }}
+                className="w-full min-h-[44px] py-3 rounded-2xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-semibold text-xs flex items-center justify-center gap-1.5 active:scale-[0.97]"
+              >
+                <FolderPlus className="w-4 h-4" />
+                <span>Create Full Project</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setNewProjEntryMode('EXPRESS');
+                  setShowNewProjectModal(true);
+                }}
+                className="w-full min-h-[44px] py-3 rounded-2xl bg-violet-500/20 hover:bg-violet-500/30 text-violet-200 border border-violet-500/40 font-semibold text-xs flex items-center justify-center gap-1.5 active:scale-[0.97]"
+              >
+                <span>I already have my voiceover transcript (Express)</span>
+              </button>
+            </div>
           </div>
         )}
 
@@ -484,6 +512,7 @@ export default function App() {
             masterPromptState={masterPromptState}
             llmHealth={llmHealth}
             onRefreshState={() => refreshPipelineState()}
+            onNavigateHub={setActiveHub}
             onNotify={notify}
           />
         )}
@@ -507,7 +536,11 @@ export default function App() {
           <ScriptHub
             activeProject={activeProject}
             stateVector={stateVector}
+            channelDna={channelDna}
+            hasValidKey={hasValidKey}
+            hasSelectedModel={hasSelectedModel}
             onRefreshState={() => refreshPipelineState()}
+            onNavigateHub={setActiveHub}
             onNotify={notify}
           />
         )}

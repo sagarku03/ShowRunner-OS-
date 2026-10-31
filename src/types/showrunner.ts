@@ -14,6 +14,7 @@ import type {
   WordBudgetResult,
 } from '../../shared/rules/math.ts';
 import type { StoryboardSlot, TranscriptWordTimestamp } from '../../shared/rules/slicer.ts';
+import type { ParsedTranscriptMeta } from '../../shared/rules/transcript.ts';
 import type {
   AssembledFlowPrompt,
   FlowPromptPack,
@@ -140,7 +141,7 @@ export interface ChannelDnaRecord {
   hookDNA: {
     first15sPattern: string;
     openLoopStyle: string;
-    somaticPull: string;
+    emotionalPull: string;
     avoidInHook: string[];
     evidence: DnaEvidenceCitation[];
   };
@@ -273,7 +274,6 @@ export interface TopicCard {
   id: string;
   title: string;
   hook15s: string;
-  somaticHook15s?: string;
   coreParadox: string;
   thumbnailIdea: string;
   hook: string;
@@ -418,6 +418,7 @@ export interface S4StagePayload {
   suggestedWpm: number;
   rollbackTo: 'S3' | null;
   estimateOnlyPreview?: boolean;
+  meta?: ParsedTranscriptMeta;
 }
 
 export interface S5StagePayload {
@@ -433,6 +434,7 @@ export interface S5StagePayload {
 
 export interface S6StagePayload {
   mode: GenerationMode;
+  styleSource?: 'DNA' | 'NEUTRAL_DEFAULT';
   totalPrompts: number;
   totalBatches: number;
   batches: PromptBatchCard[];

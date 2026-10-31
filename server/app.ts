@@ -5,6 +5,10 @@ import type { DatabaseSync } from 'node:sqlite';
 import express, { type Express, type Request, type Response, type NextFunction } from 'express';
 import {
   DEFAULT_WPM,
+  NEUTRAL_CAMERA_MOTION,
+  NEUTRAL_LIGHTING,
+  NEUTRAL_PALETTE,
+  NEUTRAL_STYLE_PREFIX,
   type DurationPresetChip,
   type GenerationMode,
   type StageId,
@@ -25,6 +29,7 @@ import { createOriginGuardMiddleware } from './security/origin.ts';
 import { createBearerAuthMiddleware } from './security/token.ts';
 import { VaultDecryptionError } from './security/vault.ts';
 import {
+  detectLanguageAndScript,
   parseExpressTranscript,
   stripAndCollectNonSpeechTokens,
   type DetectedTimeUnit,
@@ -629,13 +634,14 @@ export function createShowRunnerApp(options: CreateAppOptions): Express {
       } else {
         for (const stg of ['S1', 'S2', 'S2.5', 'S3'] as const) {
           const cur = getStageRow(db, id, stg);
-          if (!cur) {
-            db.prepare(
-              `INSERT OR REPLACE INTO project_stages (project_id, stage_id, payload_json, payload_hash, status, is_dirty, updated_at)
-               VALUES (?, ?, '{}', 'external', 'EXTERNAL_PROVIDED', 0, CURRENT_TIMESTAMP)`
-            ).run(id, stg);
-          }
+          db.prepare(
+            `INSERT OR REPLACE INTO project_stages (project_id, stage_id, payload_json, payload_hash, status, is_dirty, updated_at)
+             VALUES (?, ?, ?, 'external', 'EXTERNAL_PROVIDED', 0, CURRENT_TIMESTAMP)`
+          ).run(id, stg, cur?.payload_json || '{}');
         }
+        db.prepare(
+          `UPDATE project_stages SET is_dirty = 1, status = 'DIRTY', updated_at = CURRENT_TIMESTAMP WHERE project_id = ? AND stage_id IN ('S5', 'S6', 'S7')`
+        ).run(id);
       }
 
       const updated = db.prepare(`SELECT * FROM projects WHERE id = ?`).get(id) as Record<string, unknown>;
@@ -1106,14 +1112,66 @@ export function createShowRunnerApp(options: CreateAppOptions): Express {
       const body = (req.body ?? {}) as Record<string, unknown>;
       const niche = String(body.niche ?? 'General Creator Channel').trim() || 'General Creator Channel';
       const subNiche = String(body.subNiche ?? 'High-Retention Video').trim() || 'High-Retention Video';
-      const visualStyle = String(body.visualStyle ?? body.style ?? 'Cinematic 8k').trim();
+      const visualStyle = String(body.visualStyle ?? body.style ?? NEUTRAL_STYLE_PREFIX).trim() || NEUTRAL_STYLE_PREFIX;
       const stylePrefix = String(body.stylePrefix ?? '').trim();
+      const brandName = typeof body.brandName === 'string' ? body.brandName.trim() : '';
       const negativePrompts = Array.isArray(body.negativePrompts)
         ? (body.negativePrompts as string[]).map(String)
         : [];
-      const formatPreset = String(body.formatPreset ?? 'DOCUMENTARY').toUpperCase() as any;
-      const primaryLang = String(body.language ?? body.primaryLang ?? 'English').trim();
-      const script = String(body.script ?? 'Latin').trim();
+      const formatPreset = String(body.formatPreset ?? 'EXPLAINER').toUpperCase() as ChannelDnaRecord['structure']['formatPreset'];
+
+      // X3: Prefill language/script from detected transcript script if not explicitly supplied
+      let detectedPrimary = '';
+      let detectedScript = '';
+      const transcriptSample =
+        typeof body.transcript === 'string' && body.transcript.trim()
+          ? body.transcript
+          : typeof body.transcriptText === 'string' && body.transcriptText.trim()
+            ? body.transcriptText
+            : '';
+      if (transcriptSample) {
+        const det = detectLanguageAndScript(transcriptSample);
+        detectedScript = det.script;
+        detectedPrimary = det.script === 'Devanagari' ? 'hi' : 'en';
+      } else {
+        const projMetaRow = db
+          .prepare(`SELECT transcript_meta_json FROM projects WHERE id = ?`)
+          .get(projectId) as { transcript_meta_json?: string | null } | undefined;
+        if (projMetaRow?.transcript_meta_json) {
+          try {
+            const parsedMeta = JSON.parse(projMetaRow.transcript_meta_json) as {
+              detectedLanguage?: { primary?: string; script?: string };
+            };
+            if (parsedMeta.detectedLanguage?.script) {
+              detectedScript = parsedMeta.detectedLanguage.script;
+              detectedPrimary =
+                parsedMeta.detectedLanguage.script === 'Devanagari'
+                  ? 'hi'
+                  : parsedMeta.detectedLanguage.primary || 'en';
+            }
+          } catch {
+            // ignore
+          }
+        }
+      }
+
+      const rawScript = String(body.script ?? (detectedScript || 'Latin')).trim();
+      const rawLang = String(
+        body.language ?? body.primaryLang ?? (detectedPrimary || (rawScript === 'Devanagari' ? 'hi' : 'en'))
+      ).trim();
+
+      if (brandName) {
+        db.prepare(`UPDATE projects SET brand_name = ?, niche = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(
+          brandName,
+          niche,
+          projectId
+        );
+      } else {
+        db.prepare(`UPDATE projects SET niche = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(
+          niche,
+          projectId
+        );
+      }
 
       const quickDna = normalizeChannelDnaObject(
         {
@@ -1128,8 +1186,8 @@ export function createShowRunnerApp(options: CreateAppOptions): Express {
             differentiator: 'Fast direct delivery',
           },
           language: {
-            primary: primaryLang,
-            script,
+            primary: rawLang,
+            script: rawScript,
             codeSwitchRatio: 0.1,
             formality: 0.6,
           },
@@ -1144,13 +1202,13 @@ export function createShowRunnerApp(options: CreateAppOptions): Express {
           },
           visuals: {
             style: stylePrefix || visualStyle,
-            palette: ['#0f172a', '#38bdf8', '#f8fafc'],
-            lighting: ['Cinematic volumetric'],
-            cameraMotion: ['Subtle push in'],
+            palette: [...NEUTRAL_PALETTE],
+            lighting: [NEUTRAL_LIGHTING],
+            cameraMotion: [NEUTRAL_CAMERA_MOTION],
             negativePrompts,
           },
         },
-        { source: 'EXPRESS', niche, script, primaryLang }
+        { source: 'EXPRESS', niche, script: rawScript, primaryLang: rawLang }
       );
 
       const record = handleLockChannelDna({ db, projectId, dna: quickDna });
@@ -1671,6 +1729,10 @@ export function createShowRunnerApp(options: CreateAppOptions): Express {
           typeof body.actualDurationSec === 'number' ? body.actualDurationSec : undefined,
         estimateOnlyPreview: Boolean(body.estimateOnlyPreview),
         entryMode,
+        convertFromFull: Boolean(body.convertFromFull),
+        confirmEstimated: Boolean(body.confirmEstimated),
+        fileName: typeof body.fileName === 'string' ? body.fileName : undefined,
+        fileSizeBytes: typeof body.fileSizeBytes === 'number' ? body.fileSizeBytes : undefined,
         scriptText: typeof body.scriptText === 'string' ? body.scriptText : undefined,
         targetDurationSec:
           typeof body.targetDurationSec === 'number'
@@ -1701,7 +1763,32 @@ export function createShowRunnerApp(options: CreateAppOptions): Express {
       const raw = String(body.transcript ?? body.transcriptContent ?? body.raw ?? '').trim();
       const script = typeof body.scriptText === 'string' ? body.scriptText : undefined;
       const unitsOverride = body.unitsOverride as DetectedTimeUnit | undefined;
-      const parsed = parseExpressTranscript(raw, script, { unitsOverride, allowShort: true });
+      const fileName = typeof body.fileName === 'string' ? body.fileName : undefined;
+      const fileSizeBytes = typeof body.fileSizeBytes === 'number' ? body.fileSizeBytes : undefined;
+
+      // X3: Persist detected language metadata even on preview so Quick Style sheet can prefill script/language
+      const projectId = resolveActiveProjectId(db, req);
+      if (projectId && raw) {
+        const det = detectLanguageAndScript(raw);
+        db.prepare(
+          `UPDATE projects SET transcript_meta_json = COALESCE(transcript_meta_json, ?), updated_at = CURRENT_TIMESTAMP WHERE id = ?`
+        ).run(JSON.stringify({ detectedLanguage: det, fileName }), projectId);
+      }
+
+      // X4: Preview and Lock use the exact same validation (allowShort: false)
+      const parsed = parseExpressTranscript(raw, script, {
+        unitsOverride,
+        allowShort: false,
+        fileName,
+        fileSizeBytes,
+      });
+
+      if (projectId) {
+        db.prepare(
+          `UPDATE projects SET transcript_meta_json = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`
+        ).run(JSON.stringify(parsed.meta), projectId);
+      }
+
       res.json({
         ok: true,
         data: parsed,

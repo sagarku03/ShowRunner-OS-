@@ -40,32 +40,46 @@ export const StudioHub: React.FC<StudioHubProps> = ({
   onRefreshState,
   onNotify,
 }) => {
-  const s2Payload = (stateVector?.context?.S2?.payload as S2StagePayload | null) ?? null;
-  const s25Payload = (stateVector?.context?.['S2.5']?.payload as S25StagePayload | null) ?? null;
+  const rawS2 = (stateVector?.context?.S2?.payload as S2StagePayload | null) ?? null;
+  const s2Payload =
+    rawS2 && (rawS2.shockPoint || Array.isArray(rawS2.evidence)) ? rawS2 : null;
+
+  const rawS25 = (stateVector?.context?.['S2.5']?.payload as S25StagePayload | null) ?? null;
+  const s25Payload =
+    rawS25 && rawS25.wordBudget && Array.isArray(rawS25.chapters) ? rawS25 : null;
+
+  const isExpressBypassed =
+    activeProject?.entryMode === 'EXPRESS' ||
+    stateVector?.context?.S2?.status === 'EXTERNAL_PROVIDED' ||
+    stateVector?.context?.['S2.5']?.status === 'EXTERNAL_PROVIDED';
 
   const [runningResearch, setRunningResearch] = useState(false);
   const [approvingResearch, setApprovingResearch] = useState(false);
 
   const [selectedPreset, setSelectedPreset] = useState<DurationPresetChip>('10-12');
   const [targetMinutes, setTargetMinutes] = useState<number>(
-    s25Payload?.targetMinutes ?? activeProject?.targetDuration ?? 11
+    Number(s25Payload?.targetMinutes ?? activeProject?.targetDuration ?? 11) || 11
   );
   const [wpm, setWpm] = useState<number>(
-    s25Payload?.wpm ?? activeProject?.configuredWpm ?? 187.41
+    Number(s25Payload?.wpm ?? activeProject?.configuredWpm ?? 187.41) || 187.41
   );
   const [runningRuntime, setRunningRuntime] = useState(false);
   const [savingChapters, setSavingChapters] = useState(false);
   const [chapterEdits, setChapterEdits] = useState<Record<number, string>>({});
 
   React.useEffect(() => {
-    if (s25Payload?.chapters) {
+    if (s25Payload && Array.isArray(s25Payload.chapters)) {
       const next: Record<number, string> = {};
       for (const ch of s25Payload.chapters) {
         next[ch.phaseIndex] = ch.chapterTitle;
       }
       setChapterEdits(next);
-      setTargetMinutes(s25Payload.targetMinutes);
-      setWpm(s25Payload.wpm);
+      if (typeof s25Payload.targetMinutes === 'number' && Number.isFinite(s25Payload.targetMinutes)) {
+        setTargetMinutes(s25Payload.targetMinutes);
+      }
+      if (typeof s25Payload.wpm === 'number' && Number.isFinite(s25Payload.wpm)) {
+        setWpm(s25Payload.wpm);
+      }
     }
   }, [s25Payload]);
 
@@ -169,6 +183,11 @@ export const StudioHub: React.FC<StudioHubProps> = ({
 
   return (
     <div className="space-y-5 pb-28">
+      {isExpressBypassed && (
+        <div className="p-3.5 rounded-2xl bg-violet-500/10 border border-violet-500/25 text-xs text-slate-300">
+          Running in <strong className="text-white">Express Transcript Mode</strong> — Grounded Research (S2) and Runtime Chapters (S2.5) are bypassed (<code className="font-mono text-violet-300">EXTERNAL_PROVIDED</code>). Use the <strong className="text-white">Script</strong> hub to upload or lock your transcript directly.
+        </div>
+      )}
       {/* STAGE 2: GROUNDED RESEARCH & HUMAN APPROVAL GATE */}
       <section className="liquid-glass p-5 space-y-4">
         <div className="flex items-center justify-between">
@@ -410,29 +429,29 @@ export const StudioHub: React.FC<StudioHubProps> = ({
           {runningRuntime ? 'Building 7 Harmon Chapters...' : 'Lock Runtime & Generate Chapters'}
         </button>
 
-        {s25Payload && (
+        {s25Payload?.wordBudget && (
           <div className="space-y-3 pt-2">
             <div className="liquid-glass-subtle p-3.5 grid grid-cols-3 gap-2 text-center">
               <div>
                 <div className="text-[10px] text-slate-400">Target Words</div>
                 <div className="font-mono text-sm font-bold text-white">
-                  {s25Payload.wordBudget.totalWords}
+                  {s25Payload.wordBudget.totalWords ?? 0}
                 </div>
                 <div className="text-[10px] text-slate-500 font-mono">
-                  {s25Payload.wordBudget.minWords}–{s25Payload.wordBudget.maxWords}
+                  {s25Payload.wordBudget.minWords ?? 0}–{s25Payload.wordBudget.maxWords ?? 0}
                 </div>
               </div>
               <div>
                 <div className="text-[10px] text-slate-400">Paragraphs</div>
                 <div className="font-mono text-sm font-bold text-emerald-400">
-                  {s25Payload.wordBudget.paragraphCount}
+                  {s25Payload.wordBudget.paragraphCount ?? 0}
                 </div>
                 <div className="text-[10px] text-slate-500 font-mono">~150w each</div>
               </div>
               <div>
                 <div className="text-[10px] text-slate-400">Sub-Loop Cadence</div>
                 <div className="font-mono text-sm font-bold text-violet-300">
-                  {s25Payload.wordBudget.subLoopMinWords}–{s25Payload.wordBudget.subLoopMaxWords}w
+                  {s25Payload.wordBudget.subLoopMinWords ?? 0}–{s25Payload.wordBudget.subLoopMaxWords ?? 0}w
                 </div>
                 <div className="text-[10px] text-slate-500 font-mono">1.0–1.5× WPM</div>
               </div>
@@ -454,7 +473,7 @@ export const StudioHub: React.FC<StudioHubProps> = ({
                 </button>
               </div>
 
-              {s25Payload.chapters.map((ch) => (
+              {(s25Payload.chapters || []).map((ch) => (
                 <div key={ch.phaseIndex} className="liquid-glass-subtle p-3 space-y-1.5">
                   <div className="flex items-center justify-between text-[11px] text-slate-400 font-mono">
                     <span>

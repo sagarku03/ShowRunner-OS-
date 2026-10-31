@@ -1,6 +1,6 @@
-# ShowRunner OS v1.3.0 — Sovereign Edge-Native Production Engine
+# ShowRunner OS v1.3.1 — Sovereign Edge-Native Production Engine
 
-ShowRunner OS v1.3.0 is a sovereign, edge-native multimodal pre-production engine engineered for **Android Termux (`127.0.0.1:5000`)** and modern desktop Chromium environments. It is built entirely on **Node.js 22.13+ (`node:sqlite` in WAL mode)**, **Express**, **React 19**, and the **Google Gemini TypeScript SDK (`@google/genai`)**.
+ShowRunner OS v1.3.1 is a sovereign, edge-native multimodal pre-production engine engineered for **Android Termux (`127.0.0.1:5000`)** and modern desktop Chromium environments. It is built entirely on **Node.js 22.13+ (`node:sqlite` in WAL mode)**, **Express**, **React 19**, and the **Google Gemini TypeScript SDK (`@google/genai`)**.
 
 ---
 
@@ -8,30 +8,147 @@ ShowRunner OS v1.3.0 is a sovereign, edge-native multimodal pre-production engin
 
 ShowRunner OS transforms raw concepts or pre-recorded voiceovers into complete, production-ready cinematic bundles without third-party cloud dependencies, subscriptions, or mock data.
 
-- **P1: Canonical Timestamps & Flow Prompt Syntax**:
+- **Canonical Timestamps & Flow Prompt Syntax**:
   - Single canonical format: `#[MM-SS.mmm]` (hash prefix, hyphen delimiter, zero colons, 3-digit millisecond precision).
   - Pure integer millisecond arithmetic across all slicing logic (`startMs`, `endMs`, `durationMs`, `actionMs`, `holdMs`).
   - Zero-drift guarantee across long-form productions (up to 3+ hours).
   - Every prompt line begins strictly with `#[MM-SS.mmm] `, followed by the DNA Visual Style Prefix, and Mode 2 prompts append `@start:#[MM-SS.mmm]`.
 
-- **P2: Express Transcript Mode**:
-  - Upload or paste existing voiceover transcripts directly without requiring Stage 1 ideation, Stage 2 research, or Stage 3 scriptwriting.
-  - Multi-format parser matrix: WebVTT, SRT, WhisperX JSON, Descript JSON, Flat JSON, ElevenLabs/Cartesia character-alignment JSON, CSV, TSV, plain timed lines, and tagged lines `#[MM-SS.mmm]`.
-  - Precision grading: `WORD_EXACT_MS`, `WORD_COARSE`, and `CUE_INTERPOLATED` (using character-weighted proportional duration interpolation where every word is flagged with `estimated: true`).
-  - Runtime locked to final word `endMs` (never startMs).
-  - Automated non-speech token stripper (removes `[music]`, `[applause]`, `<c.color>`, tags).
-  - Deterministic fuzzy script-paragraph alignment with confidence scores.
-  - Quick Style Channel DNA locking with `source: 'EXPRESS'`.
-
-- **P3: Audit Gaps Closed**:
-  - Real thumbnail vision inspection via Gemini FAST tier using `inlineData` on public `i.ytimg.com` thumbnail images with local SHA256 byte caching and graceful fallback.
-  - Asynchronous background jobs (HTTP 202 `{ jobId }`) with real-time WebSocket progress broadcasts.
-  - Channel niche neutrality: zero hardcoded documentary labels; universal creator presets (Documentary, Explainer, Storytime, Listicle, Custom).
-  - In-app System & LLM Diagnostics (`GET /api/v1/diagnostics`) with one-tap clipboard copy.
+- **Express Transcript Mode (End-to-End Mobile & Desktop)**:
+  - Upload a `.vtt`, `.srt`, `.json`, `.csv`, `.tsv`, or `.txt` file directly from Android or desktop (or paste into the editable box) without requiring Stage 1 ideation, Stage 2 research, or Stage 3 scriptwriting.
+  - Guided 5-step Express Import Stepper with inline Quick Style locking (`source: 'EXPRESS'`), prefilled language/script detection (Devanagari/Latin), inline pacing selectors, and one-tap **Lock & slice**.
+  - Full 10-format parser matrix with global unit detection (`SECONDS`, `MILLISECONDS`, `TIMECODE`) and manual override selector.
 
 ---
 
-## 2. Termux Mobile Installation & Setup
+## 2. Express Transcript Mode — Complete Guide
+
+### 2.1 Uploading Transcript Files on Android & Desktop
+1. Tap **Import transcript** in the top bar (or open the **Script** hub and scroll to **Express Transcript Stepper & Runtime Lock**).
+2. Tap **Upload transcript file (.vtt, .srt, .json, .csv, .tsv, .txt)** (minimum 48 px touch target) or drag-and-drop a file onto the card.
+   - The file input uses an Android-safe `accept` list covering both file extensions and generic MIME types (`.vtt,.srt,.json,.csv,.tsv,.txt,text/vtt,text/plain,text/csv,text/tab-separated-values,application/json,application/x-subrip,application/octet-stream`) so Android's Files picker never greys out `.srt`, `.vtt`, or `.json` exports.
+3. Client-side decoding runs via `decodeTranscriptBytes(bytes)`:
+   - Supports **UTF-8** (with or without BOM), **UTF-16LE** (BOM), **UTF-16BE** (BOM), and **windows-1252** fallback; 100% Devanagari-safe.
+   - Enforces a 5 MB size cap (`TRANSCRIPT_FILE_TOO_LARGE`), rejects 0-byte files (`TRANSCRIPT_FILE_EMPTY`), and blocks binary files containing NUL bytes (`TRANSCRIPT_FILE_NOT_TEXT`).
+4. Once read, the text populates the editable paste box, displays **File Name**, **Size**, **Encoding**, **Detected Format**, and **Units** chips, and **auto-runs the preview parser**.
+5. Optionally upload or paste your **Original script (`.txt` / `.md`)** in the second slot for deterministic n-gram paragraph alignment.
+
+### 2.2 The 5-Step Pre-Flight Checklist & Stepper
+The Express Import Stepper displays a persistent 5-step checklist at the top:
+1. **Valid Gemini key + models**: Verified key in Vault + Reasoning/Fast models selected (tap **Vault** to configure).
+2. **Style locked (Channel DNA or Quick Style)**: Tap **Quick Style** to open the inline sheet, prefilled with your transcript's detected language & script (`hi`/`Devanagari` or `en`/`Latin`), 4 format presets, and 6 visual style chips. Locking ticks Step 2 without leaving the screen.
+3. **Transcript parsed (≥ 50 words & ≥ 20s)**: Displays format, units, precision grade, word count, locked runtime (`lastWord.endMs`), and actual WPM. Preview and Lock share identical validation rules.
+4. **Generation mode + engine + duration chosen**: Inline dropdowns for Mode 1 / Mode 2 / Mode 3, Veo 3.1 (fixed 8s) / Omni Flash (4s/6s/8s/10s), showing exact min/max slot bounds from the model-locked pacing table.
+5. **Estimated-timing confirmation** *(only when grade = `CUE_INTERPOLATED`)*: Explicit consent checkbox `"I understand word times are estimated from cue boundaries (±X ms)"`.
+
+The primary action button label and reason banner always reflect the first unmet step, and once all steps are green you can tap **Lock Transcript Runtime** (followed by **Slice storyboard now**) or **Lock & slice in one tap**.
+
+### 2.3 Precision Grades
+- **`WORD_EXACT_MS`**: Word-level timestamps with millisecond resolution (`startMs % 100 !== 0` or `endMs % 100 !== 0` on ≥ 20% of words). Includes WhisperX, Descript, integer-ms JSON, nested ElevenLabs alignment, YouTube inline `<00:00:01.230>` VTT, word-per-cue VTT/SRT, and `#[MM-SS.mmm]` tagged lines.
+- **`WORD_COARSE`**: Word-level timestamps rounded to whole seconds or 100ms tenths.
+- **`CUE_INTERPOLATED`**: Multi-word subtitle cues without per-word timestamps. Word timings are distributed proportionally by character length (`estimated: true` on each word). Requires explicit `confirmEstimated: true` consent to lock, displays an **ESTIMATED** badge across Storyboard, Visual Prompts, and Packaging, and records `"transcriptPrecisionGrade": "CUE_INTERPOLATED"` in `Project_Manifest.json`.
+
+### 2.4 Supported Transcript Formats (10 Formats with 5-Line Samples)
+
+#### 1. WebVTT Multi-Word Cues (`.vtt` → `CUE_INTERPOLATED`)
+```vtt
+WEBVTT
+
+00:00.000 --> 00:03.200
+In nineteen seventy-one Intel introduced the first commercial microprocessor.
+00:03.400 --> 00:06.800
+Engineers integrated two thousand three hundred transistors onto silicon.
+```
+
+#### 2. WebVTT / SRT Word-Per-Cue (≥ 90% single-word cues → `WORD_EXACT_MS`)
+```vtt
+WEBVTT
+
+00:00.120 --> 00:00.485
+Silicon
+00:00.510 --> 00:00.945
+photonics
+```
+
+#### 3. YouTube Auto-Caption Inline-Timestamp WebVTT (`<HH:MM:SS.mmm><c>` → `WORD_EXACT_MS`)
+```vtt
+WEBVTT
+
+00:00:00.100 --> 00:00:02.500
+Deep <00:00:00.525><c> neural</c><00:00:01.140><c> networks</c><00:00:01.815><c> converge</c>
+```
+
+#### 4. SubRip (`.srt`)
+```srt
+1
+00:00:00,000 --> 00:00:02,500
+वैज्ञानिकों ने प्रयोगशाला में कोशिकाओं का परीक्षण किया।
+2
+00:00:02,800 --> 00:00:05,900
+हर सेकंड लाखों विद्युत तरंगें मस्तिष्क को नियंत्रित करती हैं।
+```
+
+#### 5. WhisperX Word-Level JSON (`WHISPERX_JSON` → `WORD_EXACT_MS`)
+```json
+{
+  "segments": [{
+    "start": 0.0, "end": 1.45,
+    "words": [{ "word": "Quantum", "start": 0.125, "end": 0.640 }, { "word": "coherence", "start": 0.680, "end": 1.450 }]
+  }]
+}
+```
+
+#### 6. Descript Word-Level JSON (`DESCRIPT_JSON` → `WORD_EXACT_MS`)
+```json
+{
+  "words": [
+    { "word": "Descript", "start": 0.055, "end": 0.625 },
+    { "word": "alignment", "start": 0.660, "end": 1.340 }
+  ]
+}
+```
+
+#### 7. Flat JSON Array — Seconds or Integer Milliseconds (`FLAT_JSON` → `WORD_EXACT_MS`)
+```json
+[
+  { "word": "नमस्ते", "start": 143, "end": 612 },
+  { "word": "भारत", "start": 650, "end": 1289 },
+  { "word": "विज्ञान", "start": 1320, "end": 1945 }
+]
+```
+
+#### 8. ElevenLabs / Cartesia Character-Alignment JSON (Nested or Top-Level → `WORD_EXACT_MS`)
+```json
+{
+  "alignment": {
+    "characters": ["न", "म", "स्", "ते", " ", "भा", "र", "त"],
+    "character_start_times_seconds": [0.012, 0.085, 0.142, 0.215, 0.310, 0.385, 0.492, 0.588],
+    "character_end_times_seconds": [0.085, 0.142, 0.215, 0.310, 0.385, 0.492, 0.588, 0.712]
+  }
+}
+```
+
+#### 9. CSV / TSV (`CSV` / `TSV` → Auto or Manual Units Override)
+```csv
+start,end,word
+0.125,0.540,Silicon
+0.580,1.120,wafer
+1.160,1.785,lithography
+1.820,2.410,precision
+```
+
+#### 10. Canonical Tagged Lines (`#[MM-SS.mmm]` → `WORD_EXACT_MS`) & Plain Timed Lines (`[MM:SS.mmm]`)
+```text
+#[00-00.125] Quantum
+#[00-00.540] coherence
+#[00-01.185] sustains
+#[00-01.790] entanglement
+#[00-02.410]states
+```
+
+---
+
+## 3. Termux Mobile Installation & Setup
 
 ### Step 1: Disable Android 12+ Phantom Process Killer (Run once via ADB)
 ```bash
@@ -41,210 +158,59 @@ adb shell settings put global settings_enable_monitor_phantom_procs false
 ```
 
 ### Step 2: Unzip and Install in Termux
-If you downloaded `showrunner-os-v1.3.0.zip` on your phone:
 ```bash
-# Move to Termux home directory
 cd $HOME
-
-# Copy from Download folder (Termux storage permission required: termux-setup-storage)
-cp /sdcard/Download/showrunner-os-v1.3.0.zip .
-unzip showrunner-os-v1.3.0.zip -d showrunner-os
+cp /sdcard/Download/showrunner-os-v1.3.1.zip .
+unzip showrunner-os-v1.3.1.zip -d showrunner-os
 cd showrunner-os
-
-# Run the automated setup script
 chmod +x scripts/*.sh
 ./scripts/termux-setup.sh
 ```
 
 ### Step 3: Start ShowRunner Daemon
 ```bash
-# Starts daemon with WakeLock on 127.0.0.1:5000 and prints your Bearer token
 ./scripts/start.sh
 ```
-Open Chrome or Kiwi Browser on your Android phone and navigate to:
-`http://127.0.0.1:5000`
-Paste your Bearer token from `~/.showrunner_token` when prompted.
+Open Chrome on your Android phone and navigate to `http://127.0.0.1:5000`. Paste your Bearer token from `~/.showrunner_token` when prompted.
 
 ---
 
-## 3. Complete API Specification
+## 4. Troubleshooting & Error Matrix
 
-All protected endpoints require `Authorization: Bearer <token>` in Termux mode.
-
-### Vault & Health (Stage 0)
-- `GET /api/v1/runtime` — Public runtime info (`mode`, `showPreviewBanner`, `requireBearerAuth`).
-- `GET /api/v1/vault/keys` — List stored API keys with masked values and validation status.
-- `POST /api/v1/vault/keys` — Add and immediately validate a Gemini or YouTube key via live 1-token call.
-- `POST /api/v1/vault/keys/:id/test` — Test a specific key and discover available models.
-- `DELETE /api/v1/vault/keys/:id` — Delete a key from the vault.
-- `GET /api/v1/vault/discover` — Discover and filter available Reasoning, Fast, and Embedding models.
-- `POST /api/v1/vault/config` — Lock project model calibration and smart tiering.
-- `GET /api/v1/health/llm` — LLM status pill data (`activeKeys`, `validKeys`, `models`, `lastError`).
-
-### Channel DNA & Master Prompt (Stage 0 & S0B)
-- `GET /api/v1/stage/0/master-prompt` — Get current Master Prompt Override state.
-- `POST /api/v1/stage/0/master-prompt` — Save and analyze Master Prompt (extract persona, custom chapters, banned words, negative prompts).
-- `POST /api/v1/stage/0/dna/analyse` — Run 2-step grounded Channel DNA analysis on a competitor channel.
-- `POST /api/v1/stage/0/dna/lock` — Lock Channel DNA (increments version, triggers downstream invalidation).
-- `POST /api/v1/stage/0/dna/unlock` — Unlock Channel DNA.
-- `POST /api/v1/stage/0/quick-style` — Lock minimal Express Channel DNA (`source: 'EXPRESS'`).
-
-### Topics & Blacklist (Stage 1)
-- `POST /api/v1/stage/1/topics` — Generate 10-card Topic Matrix or perform custom semantic topic alignment.
-- `POST /api/v1/stage/1/lock` — Lock chosen topic and initialize project pipeline.
-- `GET /api/v1/blacklist` — List banned topic anchors and phrases.
-- `POST /api/v1/blacklist` — Add topic anchor to blacklist.
-
-### Grounded Research (Stage 2 & 2.5)
-- `POST /api/v1/stage/2/research` (Async 202) — Run Google Search grounded research + MMKG claim triples.
-- `POST /api/v1/stage/2/approve` — Human approval gate for research claims and evidence.
-- `POST /api/v1/stage/2_5/runtime` — Synthesize 7-phase Harmon architecture & word budgets.
-- `PUT /api/v1/stage/2_5/runtime` — Manually edit runtime targets or chapter beats.
-
-### Dual Script & Audit (Stage 3)
-- `POST /api/v1/stage/3/script` (Async 202) — Generate Box 1 & Box 2 dual script and execute 17-point audit.
-- `POST /api/v1/stage/3/audit` — Re-run 17-point audit without rewriting script.
-- `POST /api/v1/stage/3/repair` (Async 202) — Tri-node surgical repair on failing paragraph.
-
-### Transcript Lock & Storyboard (Stage 4 & 5)
-- `POST /api/v1/stage/4/transcript/preview` — Parse transcript without saving, returning metrology, precision grade, and stripped tokens.
-- `GET /api/v1/stage/4/transcript` — Get current locked transcript and metrology.
-- `POST /api/v1/stage/4/transcript` — Lock transcript to final word endMs; evaluate 5% drift.
-- `PUT /api/v1/stage/4/transcript/tokens` — Strip non-speech tokens.
-- `POST /api/v1/stage/4/rollback` — One-click drift rollback and speaking pace recalibration.
-- `POST /api/v1/stage/5/storyboard` (Supports `?async=true`) — Slice timeline into storyboard slots using model-locked pacing bounds.
-
-### Prompts, Packaging & Export (Stage 6 & 7)
-- `POST /api/v1/stage/6/prompts` (Async 202) — Translate storyboard slots into 30-prompt batches and 100-prompt Flow packs.
-- `POST /api/v1/stage/7/packaging` (Async 202) — Generate 3-pack packaging variants, FACS facial cues, 4-tier SEO tags, and EMRI (< 20) evaluation.
-- `POST /api/v1/stage/7/select-pack` — Select passing pack (Pack A/B/C).
-- `GET /api/v1/export/bundle` — Download comprehensive `MasterBundle.zip`.
-
-### System & Jobs
-- `GET /api/v1/jobs/:id` — Poll background async job status (`RUNNING`, `DONE`, `FAILED`).
-- `GET /api/v1/diagnostics` — System diagnostics (memory, database WAL size, uptime, keys, logs).
-- `GET /api/v1/pipeline/state` — Real-time state vector across all stages.
-
----
-
-## 4. Transcript Format Matrix & Sample Inputs
-
-ShowRunner OS accepts transcripts in any of the following formats:
-
-### 1. WebVTT (`.vtt`)
-```vtt
-WEBVTT
-
-00:00.000 --> 00:02.500
-In nineteen seventy-one, Intel introduced the first microprocessor.
-
-00:02.800 --> 00:05.900
-Engineers placed two thousand three hundred transistors on silicon.
-```
-
-### 2. SubRip (`.srt`)
-```srt
-1
-00:00:00,000 --> 00:00:02,500
-In nineteen seventy-one, Intel introduced the first microprocessor.
-
-2
-00:00:02,800 --> 00:00:05,900
-Engineers placed two thousand three hundred transistors on silicon.
-```
-
-### 3. WhisperX Word-Level JSON
-```json
-{
-  "segments": [
-    {
-      "start": 0.0,
-      "end": 2.5,
-      "text": "In nineteen seventy-one Intel introduced",
-      "words": [
-        { "word": "In", "start": 0.0, "end": 0.2 },
-        { "word": "nineteen", "start": 0.25, "end": 0.8 },
-        { "word": "seventy-one", "start": 0.85, "end": 1.4 },
-        { "word": "Intel", "start": 1.45, "end": 1.9 },
-        { "word": "introduced", "start": 1.95, "end": 2.5 }
-      ]
-    }
-  ]
-}
-```
-
-### 4. Descript Word-Level JSON
-```json
-{
-  "words": [
-    { "word": "In", "start": 0.0, "end": 0.2 },
-    { "word": "nineteen", "start": 0.25, "end": 0.8 },
-    { "word": "seventy-one", "start": 0.85, "end": 1.4 },
-    { "word": "Intel", "start": 1.45, "end": 1.9 },
-    { "word": "introduced", "start": 1.95, "end": 2.5 }
-  ]
-}
-```
-
-### 5. ElevenLabs / Cartesia Character-Alignment JSON
-```json
-{
-  "characters": ["I", "n", " ", "1", "9", "7", "1"],
-  "character_start_times_seconds": [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6],
-  "character_end_times_seconds": [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7]
-}
-```
-
-### 6. CSV / TSV
-```csv
-start,end,word
-0.0,0.2,In
-0.25,0.8,nineteen
-0.85,1.4,seventy-one
-1.45,1.9,Intel
-1.95,2.5,introduced
-```
-
-### 7. Tagged Lines (`#[MM-SS.mmm]`)
-```text
-#[00-00.000] In
-#[00-00.250] nineteen
-#[00-00.850] seventy-one
-#[00-01.450] Intel
-#[00-01.950] introduced
-```
-
----
-
-## 5. Troubleshooting & Error Matrix
-
-| Error Code / Symptom | Root Cause | Remediation |
+| Error Code | Root Cause | Inline UI Fix / Remediation |
 | :--- | :--- | :--- |
-| `Cannot find module '../lightningcss.android-arm64.node'` | Native lightningcss binary missing on Android Termux ARM64. | Run `./scripts/termux-setup.sh` or use `npm rebuild` / native fallback configured in `vite.config.ts`. |
-| `NO_USABLE_MODEL` / "No usable model selected" | No live models discovered for the project tier. | Open **Vault** → click **Test Key** on your Gemini key → select models from discovered dropdowns. |
-| `INVALID_KEY` / "Key rejected (401/403)" | Invalid Google Gemini API key or quota exceeded. | Enter a fresh key at **Vault → Validate & Add Key**. |
-| `TRANSCRIPT_TOO_SHORT` | Provided transcript has fewer than 3 words. | Provide full speech transcript for voiceover. |
-| `TRANSCRIPT_INVALID (at index N)` | Non-monotonic or negative timestamp at word `N`. | Inspect timestamps at indicated index in the preview table. |
-| `TRANSCRIPT_REQUIRED` | Attempting to export with estimate-only transcript. | Lock real word-level timestamp transcript in Stage 4. |
-| `401 Unauthorized` | Missing or invalid Bearer token in Termux mode. | Copy token from `~/.showrunner_token` and enter in UI modal. |
-| `403 Forbidden` (Origin Shield) | Accessing from external domain in Termux mode. | Connect strictly via `http://127.0.0.1:5000` or `http://localhost:5000`. |
-| `PACKAGING_INCOMPLETE` | LLM returned < 3 valid variants in Stage 7. | Automated retry triggers twice; ensure FAST tier key has valid quota. |
-| `TypeError: Cannot read properties of undefined (reading 'persona')` | Master Prompt extraction had missing optional keys. | Fixed in v1.3.0 with `safeExtractedSettings` defaults. |
+| `TRANSCRIPT_FILE_TOO_LARGE` | Uploaded transcript file exceeds 5 MB (`5,242,880` bytes). | Upload a text transcript under 5 MB or trim non-transcript metadata. |
+| `TRANSCRIPT_FILE_EMPTY` | Uploaded file is 0 bytes or contains only whitespace. | Choose a non-empty `.vtt`, `.srt`, `.json`, `.csv`, `.tsv`, or `.txt` file. |
+| `TRANSCRIPT_FILE_NOT_TEXT` | Uploaded file contains binary `NUL` (`0x00`) bytes (e.g., `.mp3`, `.mp4`, `.zip`). | Upload the exported text/caption file rather than raw audio/video media. |
+| `TRANSCRIPT_TOO_SHORT` | Transcript has `< 50` words or `< 20` seconds total runtime (enforced identically in Preview and Lock). | Upload or paste the full voiceover transcript (at least 50 words and 20s). |
+| `TRANSCRIPT_INVALID` | Non-monotonic timestamp, negative start time, or `endSec < startSec` at word index `N`. | Click **Jump to Offending Word** on the inline red card to highlight row `#N` in the preview table. |
+| `TRANSCRIPT_UNITS_AMBIGUOUS` | Numeric timestamps could not be unambiguously classified as seconds vs milliseconds. | Click **Use SECONDS** or **Use MILLISECONDS** on the inline fix card (or use the `Units` dropdown). |
+| `ESTIMATED_TIMINGS_UNCONFIRMED` | Locking a `CUE_INTERPOLATED` subtitle file without explicit user consent. | Check **"I understand word times are estimated from cue boundaries (±X ms)"** and lock again. |
+| `GATE_DNA_NOT_LOCKED` | Attempting to lock a transcript or run a stage before locking Channel DNA or Quick Style. | Click **Open Quick Style** on the inline fix card to lock an Express style without leaving the screen. |
+| `NO_ACTIVE_API_KEY` | No `VALID` Gemini API key in the Vault. | Click **Open Vault** → **Validate & Add Key**. |
+| `NO_USABLE_MODEL` | No Reasoning or Fast Gemini model discovered/selected for the project. | Click **Open Vault** → **Test Key** → select discovered models. |
+| `UPSTREAM_STAGE_DIRTY` | An upstream stage was modified after downstream stages were generated. | Re-run the highlighted upstream stage or use **Lock & slice in one tap**. |
+| `PACKAGING_INCOMPLETE` | LLM returned `< 3` valid variants in Stage 7 after automatic retries. | Check Gemini quota in Vault and re-run Stage 7 Packaging. |
+| `401 Unauthorized` | Missing or mismatched Bearer token in Termux mode. | Copy token from `~/.showrunner_token` into the unlock modal. |
+| `403 Forbidden` (Origin Shield) | Request originated from an untrusted external origin in Termux mode. | Access strictly via `http://127.0.0.1:5000` or `http://localhost:5000`. |
 
 ---
 
-## 6. Verification Commands
+## 5. Verification Commands
 
 ```bash
-# Verify TypeScript compile
+# 1. TypeScript static verification
 npm run typecheck
 
-# Run full acceptance test suite (T1–T15 + E1–E14)
+# 2. Full unit & integration test suite (T1–T15, E1–E14, T-U1..T-H1)
 npm test
 
-# Build production bundle
+# 3. End-to-end smoke verification (Path B + Path A + Express True-MS + Express CUE_INTERPOLATED)
+npm run smoke
+
+# 4. Production frontend build
 npm run build
 
-# Run security & secret leak audit
+# 5. Security & hygiene audit
 npm run check
 ```

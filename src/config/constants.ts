@@ -3,7 +3,7 @@
  * Every threshold, regex, and ratio from PRD v1.3.0 is defined once here.
  */
 
-export const APP_VERSION = '1.3.0' as const;
+export const APP_VERSION = '1.3.1' as const;
 
 export const STAGE_IDS = [
   'S0',
@@ -272,6 +272,31 @@ export const FORMAT_PRESETS: Record<NarrativeFormatPresetId, ReadonlyArray<Forma
 export const NEUTRAL_STYLE_PREFIX =
   '16:9 widescreen crisp digital cinematography, natural studio balance, neutral chromatic range' as const;
 export const DEFAULT_STYLE_PREFIX_LABEL = 'Default style – set DNA to customise' as const;
+export const NEUTRAL_ENVIRONMENT =
+  'Clean architectural space with balanced ambient depth' as const;
+export const NEUTRAL_LIGHTING =
+  'Balanced directional key light with natural soft fill' as const;
+export const NEUTRAL_CAMERA_MOTION =
+  '35mm steady dolly-in at controlled velocity' as const;
+export const NEUTRAL_PALETTE = ['#0f172a', '#38bdf8', '#f8fafc'] as const;
+
+export const NEUTRAL_C15_LABEL = 'Emotional Engagement & Sensory Empathy (LLM Judge)' as const;
+export const DOCUMENTARY_C15_LABEL = 'Somatic Friction & Visceral Empathy (LLM Judge)' as const;
+
+export const TRANSCRIPT_FILE_MAX_BYTES = 5 * 1024 * 1024;
+export const ANDROID_SAFE_TRANSCRIPT_ACCEPT =
+  '.vtt,.srt,.json,.csv,.tsv,.txt,text/vtt,text/plain,text/csv,text/tab-separated-values,application/json,application/x-subrip,application/octet-stream' as const;
+export const ANDROID_SAFE_SCRIPT_ACCEPT =
+  '.txt,.md,text/plain,text/markdown,application/octet-stream' as const;
+
+export const QUICK_STYLE_VISUAL_PRESETS = [
+  '16:9 widescreen crisp digital cinematography, natural studio balance',
+  '35mm film still, shallow depth of field, warm tungsten key light',
+  'Clean isometric 3D technical explainer render, high contrast',
+  'Archival photojournalism frame, tactile grain, high-contrast lighting',
+  'Minimalist editorial motion graphics, crisp vector geometry',
+  'Macro laboratory photography, coherent rim lighting, razor-sharp focus',
+] as const;
 
 export const FORMAT_PRESET_DEFAULT_STYLE_PREFIXES: Record<NarrativeFormatPresetId, string> = {
   DOCUMENTARY: '16:9 widescreen archival cinematic frame, tactile realism, muted cinematic palette',

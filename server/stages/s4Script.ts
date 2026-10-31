@@ -110,7 +110,7 @@ const SEMANTIC_JUDGE_SCHEMA: Schema = {
   properties: {
     fleschKincaidAsrScore: { type: Type.NUMBER },
     hook15sScore: { type: Type.NUMBER },
-    somaticFrictionScore: { type: Type.NUMBER },
+    emotionalEngagementScore: { type: Type.NUMBER },
     visualGroundingScore: { type: Type.NUMBER },
     noHallucinatedCitations: { type: Type.BOOLEAN },
     critique: { type: Type.STRING },
@@ -122,7 +122,7 @@ const SEMANTIC_JUDGE_SCHEMA: Schema = {
   required: [
     'fleschKincaidAsrScore',
     'hook15sScore',
-    'somaticFrictionScore',
+    'emotionalEngagementScore',
     'visualGroundingScore',
     'noHallucinatedCitations',
     'critique',
@@ -269,11 +269,11 @@ export async function evaluateSemanticJudge(
   verifiedClaimsSummary: string
 ): Promise<LlmSemanticJudgeOutput | null> {
   const systemInstruction = [
-    'You are the 17-Point Audit Semantic Judge (Checks C13-C17) for ShowRunner OS v1.3.0.',
+    'You are the 17-Point Audit Semantic Judge (Checks C13-C17) for ShowRunner OS v1.3.1.',
     'Evaluate the script against verified research claims and score:',
     '- fleschKincaidAsrScore (0-100, >= 75 passes)',
     '- hook15sScore (0-100, >= 80 passes)',
-    '- somaticFrictionScore (0-100, >= 75 passes)',
+    '- emotionalEngagementScore (0-100, >= 75 passes)',
     '- visualGroundingScore (0-100, >= 75 passes)',
     '- noHallucinatedCitations (boolean)',
   ].join(' ');

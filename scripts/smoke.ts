@@ -367,18 +367,33 @@ Multilayer Bragg mirrors reflect thirteen point five nanometer light inside a hi
 00:16.800 --> 00:25.000
 Every modern processor relies on these optical systems to pack billions of transistors into a single square centimeter.`;
 
-    const s4DRes = await fetch(`${baseUrl}/api/v1/stage/4/transcript`, {
+    // 1) Without confirmEstimated -> 422 ESTIMATED_TIMINGS_UNCONFIRMED
+    const s4DUnconfirmed = await fetch(`${baseUrl}/api/v1/stage/4/transcript`, {
       method: 'POST',
       headers: headersD,
       body: JSON.stringify({ transcript: vttD, entryMode: 'EXPRESS' }),
     });
+    assert.equal(s4DUnconfirmed.status, 422);
+
+    // 2) With confirmEstimated: true -> 200 OK
+    const s4DRes = await fetch(`${baseUrl}/api/v1/stage/4/transcript`, {
+      method: 'POST',
+      headers: headersD,
+      body: JSON.stringify({
+        transcript: vttD,
+        fileName: 'semiconductor_captions.vtt',
+        confirmEstimated: true,
+        entryMode: 'EXPRESS',
+      }),
+    });
     assert.equal(s4DRes.status, 200);
     const s4DBody = (await s4DRes.json()) as {
-      data: { transcript: { meta: { precisionGrade: string; hasEstimatedWords: boolean } } };
+      data: { transcript: { meta: { precisionGrade: string; hasEstimatedWords: boolean; fileName: string } } };
     };
     assert.equal(s4DBody.data.transcript.meta.precisionGrade, 'CUE_INTERPOLATED');
     assert.equal(s4DBody.data.transcript.meta.hasEstimatedWords, true);
-    console.log('[Smoke Test] Scenario D (Express CUE_INTERPOLATED VTT flagged end-to-end) PASS');
+    assert.equal(s4DBody.data.transcript.meta.fileName, 'semiconductor_captions.vtt');
+    console.log('[Smoke Test] Scenario D (Express CUE_INTERPOLATED VTT consent gate + metadata) PASS');
 
     console.log('[Smoke Test] PASS — Path B, Path A, Express True-MS, and Express CUE_INTERPOLATED verified.');
   } finally {

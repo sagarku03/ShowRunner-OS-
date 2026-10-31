@@ -1,11 +1,15 @@
 import { Type, type Schema } from '@google/genai';
 import type { DatabaseSync } from 'node:sqlite';
 import {
-   computeFidelityWeights,
+  computeFidelityWeights,
   DEFAULT_DNA_FIDELITY,
   DEFAULT_WPM,
   FORMAT_PRESETS,
   MAX_TITLE_CHARS,
+  NEUTRAL_CAMERA_MOTION,
+  NEUTRAL_LIGHTING,
+  NEUTRAL_PALETTE,
+  NEUTRAL_STYLE_PREFIX,
   SENTENCE_WORDS_MAX,
   SENTENCE_WORDS_MIN,
   WORDS_PER_PARAGRAPH_TARGET,
@@ -589,19 +593,19 @@ export function normalizeChannelDnaObject(
     visuals: {
       style:
         partial.visuals?.style ||
-        '16:9 widescreen high-contrast cinematic realism with controlled depth of field',
+        NEUTRAL_STYLE_PREFIX,
       palette:
         Array.isArray(partial.visuals?.palette) && partial.visuals.palette.length > 0
           ? partial.visuals.palette.map(String)
-          : ['Deep obsidian', 'Electric cyan', 'Warm tungsten key'],
+          : [...NEUTRAL_PALETTE],
       lighting:
         Array.isArray(partial.visuals?.lighting) && partial.visuals.lighting.length > 0
           ? partial.visuals.lighting.map(String)
-          : ['Chiaroscuro key lighting with subtle cyan and violet rim highlights'],
+          : [NEUTRAL_LIGHTING],
       cameraMotion:
         Array.isArray(partial.visuals?.cameraMotion) && partial.visuals.cameraMotion.length > 0
           ? partial.visuals.cameraMotion.map(String)
-          : ['35mm slow dolly-in', '50mm lateral parallax slide'],
+          : [NEUTRAL_CAMERA_MOTION],
       negativePrompts: Array.isArray(partial.visuals?.negativePrompts)
         ? partial.visuals.negativePrompts.map(String)
         : [],

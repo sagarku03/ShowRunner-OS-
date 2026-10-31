@@ -1,6 +1,9 @@
 import {
   FLOW_PACK_MAX_PROMPTS,
   MAX_KINETIC_VERBS_PER_PROMPT,
+  NEUTRAL_CAMERA_MOTION,
+  NEUTRAL_ENVIRONMENT,
+  NEUTRAL_LIGHTING,
   NEUTRAL_STYLE_PREFIX,
   PROMPT_BATCH_SIZE,
   R5_NEGATIVE_PROMPT_SUFFIX,
@@ -32,7 +35,7 @@ const CAMERA_RIG_VECTORS: ReadonlyArray<{
 }> = [
   {
     name: 'SLOW_DOLLY_IN',
-    description: '35mm anamorphic lens on a dampened motorized dolly pushing slowly inward',
+    description: NEUTRAL_CAMERA_MOTION,
     vector: [0.92, 0.35, 0.17],
   },
   {
@@ -125,6 +128,7 @@ export interface AssembledFlowPrompt {
   cameraRig: string;
   continuityCosineWithPrev: number;
   kineticVerbCount: number;
+  styleSource: 'DNA' | 'NEUTRAL_DEFAULT';
   promptText: string;
   promptLine: string;
 }
@@ -150,7 +154,10 @@ export function assembleFlowPrompts(params: {
   const results: AssembledFlowPrompt[] = [];
   let prevVector: [number, number, number] = CAMERA_RIG_VECTORS[0].vector;
 
-  const effectivePrefix = (stylePrefix || '').trim() || NEUTRAL_STYLE_PREFIX;
+  const trimmedPrefix = (stylePrefix || '').trim();
+  const hasCustomStyle = Boolean(trimmedPrefix && trimmedPrefix !== NEUTRAL_STYLE_PREFIX);
+  const effectivePrefix = trimmedPrefix || NEUTRAL_STYLE_PREFIX;
+  const styleSource: 'DNA' | 'NEUTRAL_DEFAULT' = hasCustomStyle ? 'DNA' : 'NEUTRAL_DEFAULT';
 
   const extraNegClean = (extraNegativePrompts ?? [])
     .map((s) => stripRawAuCodes(String(s)).replace(/^--no\s+/i, '').trim())
@@ -163,8 +170,8 @@ export function assembleFlowPrompts(params: {
   slots.forEach((slot, idx) => {
     const spec = visualSpecs[idx] ?? {
       slotIndex: slot.slotIndex,
-      subjectDescription: 'High-contrast primary narrative focal subject in studio lighting',
-      environmentDescription: 'Deep architectural chamber with subtle volumetric haze',
+      subjectDescription: 'Primary narrative focal subject with balanced key composition',
+      environmentDescription: NEUTRAL_ENVIRONMENT,
       actionTrajectory: 'camera pushes slowly toward the primary evidence focal plane',
       emotionTag: 'CONTEMPLATION',
     };
@@ -192,7 +199,7 @@ export function assembleFlowPrompts(params: {
       lightingPreference ??
         spec.lightingSpec ??
         defaultLightingHint ??
-        'natural balanced studio lighting with crisp key and subtle fill, high dynamic range'
+        NEUTRAL_LIGHTING
     );
 
     const timingDirective =
@@ -209,7 +216,7 @@ export function assembleFlowPrompts(params: {
             typeof slot.startMs === 'number'
           );
 
-    const isMode2 = mode === 'MODE_2_CONTINUOUS' || mode === 'MODE_2';
+    const isMode2 = mode === 'MODE_2_CONTINUOUS' || mode === 'MODE_2' || mode === 'MODE_2_VIDEO';
     const mode2Tag = isMode2 ? ` @start:${startTag}` : '';
 
     const singleLinePrompt = [
@@ -236,6 +243,7 @@ export function assembleFlowPrompts(params: {
       cameraRig: selectedRig.name,
       continuityCosineWithPrev: Number(cos.toFixed(4)),
       kineticVerbCount: verbCount,
+      styleSource,
       promptText: singleLinePrompt,
       promptLine: singleLinePrompt,
     });

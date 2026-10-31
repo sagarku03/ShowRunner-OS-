@@ -59,6 +59,10 @@ export interface AudioSyncInput {
   allowDriftContinue?: boolean;
   estimateOnlyPreview?: boolean;
   entryMode?: 'FULL' | 'EXPRESS';
+  convertFromFull?: boolean;
+  confirmEstimated?: boolean;
+  fileName?: string;
+  fileSizeBytes?: number;
   scriptText?: string;
   targetDurationSec?: number;
   unitsOverride?: DetectedTimeUnit;
@@ -67,14 +71,13 @@ export interface AudioSyncInput {
 /**
  * Stage 4: Lock Transcript to last word's EndTime and evaluate 5% runtime drift (G11 & Part A4).
  * Zero fabricated timings: missing transcript throws 422 TRANSCRIPT_REQUIRED.
+ * Cue-interpolated transcripts require confirmEstimated: true (422 ESTIMATED_TIMINGS_UNCONFIRMED).
  */
 export function handleLockTranscript(
   db: DatabaseSync,
   projectId: string,
   input: AudioSyncInput
 ): Stage4TranscriptPayload {
-  assertStageUnlocked(db, projectId, 'S4');
-
   const proj = db
     .prepare(
       `SELECT target_duration, configured_wpm, entry_mode
@@ -88,29 +91,34 @@ export function handleLockTranscript(
     throw new Error(`Project "${projectId}" not found.`);
   }
 
-  const isExpress = input.entryMode === 'EXPRESS' || proj.entry_mode === 'EXPRESS';
-  if (input.entryMode === 'EXPRESS' && proj.entry_mode !== 'EXPRESS') {
-    db.prepare(`UPDATE projects SET entry_mode = 'EXPRESS', updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(
-      projectId
-    );
-  }
-
   const s3Row = getStageRow(db, projectId, 'S3');
-  if (!isExpress && !s3Row) {
-    throw new Error('Stage 3 script payload missing.');
+  const shouldConvertFullToExpress =
+    input.entryMode === 'EXPRESS' ||
+    input.convertFromFull === true ||
+    (proj.entry_mode !== 'EXPRESS' && (!s3Row || s3Row.status !== 'PASSED'));
+
+  const isExpress = proj.entry_mode === 'EXPRESS' || shouldConvertFullToExpress;
+
+  if (shouldConvertFullToExpress && proj.entry_mode !== 'EXPRESS') {
+    db.prepare(
+      `UPDATE projects SET entry_mode = 'EXPRESS', updated_at = CURRENT_TIMESTAMP WHERE id = ?`
+    ).run(projectId);
   }
 
   if (isExpress) {
     for (const stg of ['S1', 'S2', 'S2.5', 'S3'] as const) {
-      const cur = getStageRow(db, projectId, stg as any);
-      if (!cur) {
+      const cur = getStageRow(db, projectId, stg);
+      if (!cur || shouldConvertFullToExpress) {
         db.prepare(
           `INSERT OR REPLACE INTO project_stages (project_id, stage_id, payload_json, payload_hash, status, is_dirty, updated_at)
-           VALUES (?, ?, '{}', 'external', 'EXTERNAL_PROVIDED', 0, CURRENT_TIMESTAMP)`
-        ).run(projectId, stg);
+           VALUES (?, ?, ?, 'external', 'EXTERNAL_PROVIDED', 0, CURRENT_TIMESTAMP)`
+        ).run(projectId, stg, cur?.payload_json || '{}');
       }
     }
   }
+
+  // Enforce API key + DNA gates (and S1..S3 gates if remaining in FULL mode)
+  assertStageUnlocked(db, projectId, 'S4');
 
   if (
     input.transcript === undefined ||
@@ -133,9 +141,23 @@ export function handleLockTranscript(
     const parsed = parseExpressTranscript(input.transcript, input.scriptText, {
       allowShort: false,
       unitsOverride: input.unitsOverride,
+      fileName: input.fileName,
+      fileSizeBytes: input.fileSizeBytes,
+      confirmEstimated: input.confirmEstimated,
     });
     words = parsed.words;
     meta = parsed.meta;
+
+    // X5: If precisionGrade === 'CUE_INTERPOLATED', require confirmEstimated: true
+    if (meta.precisionGrade === 'CUE_INTERPOLATED' && input.confirmEstimated !== true) {
+      const err = new Error(
+        `ESTIMATED_TIMINGS_UNCONFIRMED: Cue-interpolated transcript timings (±${meta.worstCaseCueErrorMs ?? 600} ms) require explicit confirmation (confirmEstimated: true).`
+      ) as Error & { code: string; statusCode: number };
+      err.code = 'ESTIMATED_TIMINGS_UNCONFIRMED';
+      err.statusCode = 422;
+      throw err;
+    }
+
     db.prepare(
       `UPDATE projects SET transcript_meta_json = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`
     ).run(JSON.stringify(meta), projectId);

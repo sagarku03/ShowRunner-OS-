@@ -13,6 +13,7 @@ export interface TranscriptWordTimestamp {
   startMs?: number;
   endMs?: number;
   estimated?: boolean;
+  lastWordEndInferred?: boolean;
 }
 
 export interface StoryboardSlot {

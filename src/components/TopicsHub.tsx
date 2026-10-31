@@ -32,7 +32,9 @@ export const TopicsHub: React.FC<TopicsHubProps> = ({
   onNotify,
 }) => {
   const s1Summary = stateVector?.context?.S1;
-  const s1Payload = (s1Summary?.payload as S1StagePayload | null) ?? null;
+  const rawS1 = (s1Summary?.payload as S1StagePayload | null) ?? null;
+  const s1Payload =
+    rawS1 && (Array.isArray(rawS1.candidates) || rawS1.lockedTopic) ? rawS1 : null;
 
   const [modeTab, setModeTab] = useState<'ideate' | 'custom'>('ideate');
   const [niche, setNiche] = useState(activeProject?.niche ?? '');
@@ -144,7 +146,6 @@ export const TopicsHub: React.FC<TopicsHubProps> = ({
           customTopic: {
             title: angleTitle,
             hook15s: `Within 15 seconds, the unseen mechanism of ${angleTitle} triggers an immediate physiological response.`,
-            somaticHook15s: `Within 15 seconds, the unseen mechanism of ${angleTitle} triggers an immediate physiological response.`,
             coreParadox: `Why conventional wisdom on ${angleTitle} collapses under forensic scrutiny.`,
             thumbnailIdea: 'FORENSIC SHOCK',
             retentionScore: 88,
@@ -196,12 +197,12 @@ export const TopicsHub: React.FC<TopicsHubProps> = ({
               Locked Production Topic
             </span>
             <span className="font-mono text-xs text-emerald-300">
-              {lockedTopic.title.length}/60 chars • Score {lockedTopic.retentionScore}
+              {(lockedTopic.title || '').length}/60 chars • Score {lockedTopic.retentionScore ?? 0}
             </span>
           </div>
           <h3 className="text-sm font-bold text-white">{lockedTopic.title}</h3>
           <p className="text-xs text-slate-300">
-            {lockedTopic.hook15s || lockedTopic.somaticHook15s || lockedTopic.hook}
+            {lockedTopic.hook15s || lockedTopic.hook}
           </p>
         </section>
       )}
@@ -315,7 +316,7 @@ export const TopicsHub: React.FC<TopicsHubProps> = ({
                 <div className="text-[11px] font-semibold text-violet-300">
                   3 Reframing Angles (Tap to Lock):
                 </div>
-                {customResult.reframingAngles.map((angle, i) => (
+                {(customResult.reframingAngles || []).map((angle, i) => (
                   <button
                     key={i}
                     type="button"
@@ -365,7 +366,7 @@ export const TopicsHub: React.FC<TopicsHubProps> = ({
                 <div className="text-xs text-slate-300 space-y-1">
                   <p>
                     <strong className="text-emerald-400">15s Opening Hook:</strong>{' '}
-                    {card.hook15s || card.somaticHook15s || card.hook}
+                    {card.hook15s || card.hook}
                   </p>
                   <p>
                     <strong className="text-violet-400">Core Paradox:</strong>{' '}

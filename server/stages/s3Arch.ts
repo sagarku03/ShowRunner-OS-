@@ -54,7 +54,7 @@ export interface Stage25RuntimePayload {
     phaseName: string;
     primaryClaimId: string;
     counterpointClaimId: string;
-    somaticFrictionCue: string;
+    emotionalFrictionCue: string;
   }>;
 }
 
@@ -111,9 +111,9 @@ const ARCH_RESPONSE_SCHEMA: Schema = {
           phaseName: { type: Type.STRING },
           primaryClaimId: { type: Type.STRING },
           counterpointClaimId: { type: Type.STRING },
-          somaticFrictionCue: { type: Type.STRING },
+          emotionalFrictionCue: { type: Type.STRING },
         },
-        required: ['phaseName', 'primaryClaimId', 'counterpointClaimId', 'somaticFrictionCue'],
+        required: ['phaseName', 'primaryClaimId', 'counterpointClaimId', 'emotionalFrictionCue'],
       },
     },
   },

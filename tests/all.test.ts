@@ -30,11 +30,20 @@ import {
   alignScriptParagraphs,
   computePrecisionGrade,
   computeTranscriptMetrology,
+  decodeTranscriptBytes,
   interpolateCueWordsProportional,
   parseExpressTranscript,
   stripAndCollectNonSpeechTokens,
   validateWordTimestamps,
 } from '../shared/rules/transcript.ts';
+import {
+  applyTranscriptFileUpload,
+  clearTranscriptUpload,
+  createInitialTranscriptUploadState,
+  evaluateExpressChecklist,
+  mapErrorToInlineFixCard,
+  setTranscriptUnitsOverride,
+} from '../shared/rules/expressFlow.ts';
 import { runFull17PointAudit } from '../shared/rules/audit.ts';
 import {
   normaliseEnglishSpoken,
@@ -2650,7 +2659,11 @@ This breakthrough architecture paved the way for the personal computer revolutio
       const lockRes = await fetch(`${srv.baseUrl}/api/v1/stage/4/transcript`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ transcript: vttContent, entryMode: 'EXPRESS' }),
+        body: JSON.stringify({
+          transcript: vttContent,
+          entryMode: 'EXPRESS',
+          confirmEstimated: true,
+        }),
       });
       assert.equal(lockRes.status, 200);
 
@@ -2698,8 +2711,496 @@ This breakthrough architecture paved the way for the personal computer revolutio
       assert.ok(zip.file('Packaging_3Packs_And_SEO.json'));
       assert.ok(zip.file('Channel_DNA.json'));
       assert.ok(zip.file('Project_Manifest.json'));
+      const manifestJson = JSON.parse(await zip.file('Project_Manifest.json')!.async('string')) as {
+        transcriptPrecisionGrade: string;
+      };
+      assert.equal(manifestJson.transcriptPrecisionGrade, 'CUE_INTERPOLATED');
     } finally {
       await srv.close();
     }
+  });
+
+  // ===========================================================================
+  // RE-AUDIT v1.3.1 FINISHING PASS SUITES (T-U1, T-U2, T-X1..T-X7, T-P1, T-H1)
+  // ===========================================================================
+
+  it('T-U1 — decodeTranscriptBytes: UTF-8, UTF-8+BOM, UTF-16LE/BE, Devanagari, >5 MB -> TRANSCRIPT_FILE_TOO_LARGE, 0 B -> TRANSCRIPT_FILE_EMPTY, NUL -> TRANSCRIPT_FILE_NOT_TEXT', () => {
+    // 1. Plain UTF-8 & Devanagari
+    const devanagariText = '#[00-00.125] वैज्ञानिकों\n#[00-00.650] प्रयोगशाला';
+    const utf8Bytes = new TextEncoder().encode(devanagariText);
+    const d1 = decodeTranscriptBytes(utf8Bytes);
+    assert.equal(d1.encoding, 'UTF-8');
+    assert.equal(d1.text, devanagariText);
+
+    // 2. UTF-8 with BOM (EF BB BF)
+    const bomUtf8 = new Uint8Array([0xef, 0xbb, 0xbf, ...utf8Bytes]);
+    const d2 = decodeTranscriptBytes(bomUtf8);
+    assert.equal(d2.encoding, 'UTF-8');
+    assert.equal(d2.text, devanagariText);
+    assert.equal(d2.text.charCodeAt(0), '#'.charCodeAt(0));
+
+    // 3. UTF-16LE with BOM (FF FE)
+    const sampleAscii = 'WEBVTT\n00:00.000 --> 00:01.000\nHello';
+    const utf16LeBytes = new Uint8Array(2 + sampleAscii.length * 2);
+    utf16LeBytes[0] = 0xff;
+    utf16LeBytes[1] = 0xfe;
+    for (let i = 0; i < sampleAscii.length; i++) {
+      const code = sampleAscii.charCodeAt(i);
+      utf16LeBytes[2 + i * 2] = code & 0xff;
+      utf16LeBytes[2 + i * 2 + 1] = (code >> 8) & 0xff;
+    }
+    const d3 = decodeTranscriptBytes(utf16LeBytes);
+    assert.equal(d3.encoding, 'UTF-16LE');
+    assert.equal(d3.text, sampleAscii);
+
+    // 4. UTF-16BE with BOM (FE FF)
+    const utf16BeBytes = new Uint8Array(2 + sampleAscii.length * 2);
+    utf16BeBytes[0] = 0xfe;
+    utf16BeBytes[1] = 0xff;
+    for (let i = 0; i < sampleAscii.length; i++) {
+      const code = sampleAscii.charCodeAt(i);
+      utf16BeBytes[2 + i * 2] = (code >> 8) & 0xff;
+      utf16BeBytes[2 + i * 2 + 1] = code & 0xff;
+    }
+    const d4 = decodeTranscriptBytes(utf16BeBytes);
+    assert.equal(d4.encoding, 'UTF-16BE');
+    assert.equal(d4.text, sampleAscii);
+
+    // 5. Empty file -> TRANSCRIPT_FILE_EMPTY
+    assert.throws(
+      () => decodeTranscriptBytes(new Uint8Array(0)),
+      (err: Error & { code?: string }) => err.code === 'TRANSCRIPT_FILE_EMPTY'
+    );
+
+    // 6. > 5 MB -> TRANSCRIPT_FILE_TOO_LARGE
+    const over5Mb = new Uint8Array(5 * 1024 * 1024 + 10);
+    over5Mb.fill(65);
+    assert.throws(
+      () => decodeTranscriptBytes(over5Mb),
+      (err: Error & { code?: string }) => err.code === 'TRANSCRIPT_FILE_TOO_LARGE'
+    );
+
+    // 7. Binary / NUL bytes -> TRANSCRIPT_FILE_NOT_TEXT
+    const binaryBytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x00, 0x00, 0x1a, 0x0a]);
+    assert.throws(
+      () => decodeTranscriptBytes(binaryBytes),
+      (err: Error & { code?: string }) => err.code === 'TRANSCRIPT_FILE_NOT_TEXT'
+    );
+  });
+
+  it('T-U2 — Transcript upload reducer/helper: sets text, detects format & encoding, stores fileName, clears cleanly, accepts manual units override', () => {
+    const jsonSample = JSON.stringify([
+      { word: 'नमस्ते', start: 100, end: 450 },
+      { word: 'दुनिया', start: 500, end: 950 },
+    ]);
+    const bytes = new TextEncoder().encode(jsonSample);
+    const state1 = applyTranscriptFileUpload(
+      createInitialTranscriptUploadState(),
+      { name: 'voiceover_hindi.json', bytes }
+    );
+    assert.equal(state1.fileName, 'voiceover_hindi.json');
+    assert.equal(state1.fileSizeBytes, bytes.byteLength);
+    assert.equal(state1.detectedEncoding, 'UTF-8');
+    assert.equal(state1.formatHint, 'FLAT_JSON');
+    assert.equal(state1.shouldAutoPreview, true);
+    assert.equal(state1.uploadError, null);
+
+    const state2 = setTranscriptUnitsOverride(state1, 'SECONDS');
+    assert.equal(state2.unitsOverride, 'SECONDS');
+
+    const cleared = clearTranscriptUpload();
+    assert.equal(cleared.fileName, null);
+    assert.equal(cleared.transcriptText, '');
+    assert.equal(cleared.unitsOverride, undefined);
+  });
+
+  it('T-X1 & T-X2 — Express checklist & inline gate fix cards: 5-step checklist order, primary button label & reason, and gate error card mappings', () => {
+    const samplePreview = parseExpressTranscript(
+      `WEBVTT\n\n00:00:00.000 --> 00:00:12.000\n${Array.from({ length: 30 }, (_, i) => `word${i}`).join(' ')}\n\n00:00:12.000 --> 00:00:25.000\n${Array.from({ length: 30 }, (_, i) => `token${i}`).join(' ')}`
+    );
+
+    // Step 1 unmet: missing key
+    const c1 = evaluateExpressChecklist({
+      hasValidGeminiKeyAndModels: false,
+      hasLockedStyle: false,
+      parsedPreview: null,
+      generationMode: 'MODE_2_VIDEO',
+      videoProvider: 'VEO_3_1',
+      defaultClipDuration: 8,
+      confirmEstimated: false,
+    });
+    assert.equal(c1.canLock, false);
+    assert.equal(c1.firstUnmetStep?.id, 'GEMINI_KEY_AND_MODELS');
+    assert.equal(c1.primaryButtonLabel, 'Fix: Validate Gemini Key in Vault first');
+    assert.ok(c1.disabledReason && c1.disabledReason.length > 5);
+
+    // Step 2 unmet: style not locked
+    const c2 = evaluateExpressChecklist({
+      hasValidGeminiKeyAndModels: true,
+      hasLockedStyle: false,
+      parsedPreview: null,
+      generationMode: 'MODE_2_VIDEO',
+      videoProvider: 'VEO_3_1',
+      defaultClipDuration: 8,
+      confirmEstimated: false,
+    });
+    assert.equal(c2.firstUnmetStep?.id, 'STYLE_LOCKED');
+    assert.equal(c2.primaryButtonLabel, 'Fix: Lock a style first');
+
+    // Step 5 unmet: CUE_INTERPOLATED without consent
+    const c5 = evaluateExpressChecklist({
+      hasValidGeminiKeyAndModels: true,
+      hasLockedStyle: true,
+      parsedPreview: samplePreview,
+      generationMode: 'MODE_2_VIDEO',
+      videoProvider: 'OMNI_FLASH',
+      defaultClipDuration: 6,
+      confirmEstimated: false,
+    });
+    assert.equal(c5.steps.length, 5);
+    assert.equal(c5.canLock, false);
+    assert.equal(c5.firstUnmetStep?.id, 'ESTIMATED_TIMING_CONSENT');
+
+    // All met once confirmEstimated is true
+    const cReady = evaluateExpressChecklist({
+      hasValidGeminiKeyAndModels: true,
+      hasLockedStyle: true,
+      parsedPreview: samplePreview,
+      generationMode: 'MODE_2_VIDEO',
+      videoProvider: 'OMNI_FLASH',
+      defaultClipDuration: 6,
+      confirmEstimated: true,
+    });
+    assert.equal(cReady.canLock, true);
+    assert.equal(cReady.firstUnmetStep, null);
+    assert.equal(cReady.disabledReason, null);
+
+    // T-X2: Gate error -> inline fix card mappings
+    assert.equal(
+      mapErrorToInlineFixCard({ code: 'GATE_DNA_NOT_LOCKED', message: 'DNA not locked' })?.actionType,
+      'OPEN_QUICK_STYLE'
+    );
+    assert.equal(
+      mapErrorToInlineFixCard({ code: 'NO_ACTIVE_API_KEY', message: 'No key' })?.actionType,
+      'OPEN_VAULT'
+    );
+    assert.equal(
+      mapErrorToInlineFixCard({ code: 'NO_USABLE_MODEL', message: 'No model' })?.actionType,
+      'OPEN_VAULT'
+    );
+    const invCard = mapErrorToInlineFixCard({
+      code: 'TRANSCRIPT_INVALID',
+      message: 'Non-monotonic word at index 14',
+    });
+    assert.equal(invCard?.actionType, 'HIGHLIGHT_OFFENDING_WORD');
+    assert.equal(invCard?.offendingIndex, 14);
+    assert.equal(
+      mapErrorToInlineFixCard({ code: 'TRANSCRIPT_UNITS_AMBIGUOUS', message: 'Ambiguous' })?.actionType,
+      'SELECT_TIME_UNITS'
+    );
+  });
+
+  it('T-X3, T-X4, T-X5, T-X6, T-X7 — Server Express endpoints: Quick Style script detection, Preview/Lock parity (<50w/<20s -> 422), Estimated consent gate (422 ESTIMATED_TIMINGS_UNCONFIRMED), and FULL->EXPRESS conversion', async () => {
+    const db = openDatabase(':memory:');
+    const fakeGemini = new FakeGeminiGateway();
+    const srv = await startTestServer({ db, gemini: fakeGemini });
+    try {
+      const baseHeaders = {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${srv.token}`,
+      };
+      await fetch(`${srv.baseUrl}/api/v1/vault/keys`, {
+        method: 'POST',
+        headers: baseHeaders,
+        body: JSON.stringify({ apiKey: 'test-key-tx-valid', projectLabel: 'Key TX' }),
+      });
+
+      // Create a FULL project first to also test T-X6 conversion
+      const pRes = await fetch(`${srv.baseUrl}/api/v1/projects`, {
+        method: 'POST',
+        headers: baseHeaders,
+        body: JSON.stringify({
+          name: 'Full To Express Conversion Test',
+          niche: 'Hindi Science',
+          entryMode: 'FULL',
+        }),
+      });
+      const projectId = ((await pRes.json()) as { data: { project: { id: string } } }).data.project.id;
+      const headers = { ...baseHeaders, 'X-Project-Id': projectId };
+
+      // T-X3: Quick Style with Devanagari transcriptText prefills hi + Devanagari and NEUTRAL defaults
+      const qsRes = await fetch(`${srv.baseUrl}/api/v1/stage/0/quick-style`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          niche: 'Hindi Science',
+          transcriptText: 'वैज्ञानिकों ने प्रयोगशाला में कोशिकाओं का परीक्षण किया',
+        }),
+      });
+      assert.equal(qsRes.status, 200);
+      const qsBody = (await qsRes.json()) as {
+        data: {
+          dnaRecord: {
+            dna: {
+              source: string;
+              language: { primary: string; script: string };
+              visuals: { lighting: string[]; cameraMotion: string[] };
+            };
+          };
+        };
+      };
+      assert.equal(qsBody.data.dnaRecord.dna.source, 'EXPRESS');
+      assert.equal(qsBody.data.dnaRecord.dna.language.primary, 'hi');
+      assert.equal(qsBody.data.dnaRecord.dna.language.script, 'Devanagari');
+      assert.ok(
+        !qsBody.data.dnaRecord.dna.visuals.lighting[0].includes('Cinematic volumetric'),
+        'Quick Style must use neutral lighting defaults'
+      );
+
+      // T-X4: Preview and Lock parity — short transcript (10 words, 5s) fails with 422 TRANSCRIPT_TOO_SHORT on BOTH preview and lock
+      const shortTranscript = JSON.stringify(
+        Array.from({ length: 10 }, (_, i) => ({
+          word: `शब्द_${i + 1}`,
+          start: i * 0.5,
+          end: (i + 1) * 0.5,
+        }))
+      );
+      const prevShort = await fetch(`${srv.baseUrl}/api/v1/stage/4/transcript/preview`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ transcript: shortTranscript }),
+      });
+      assert.equal(prevShort.status, 422);
+      const prevShortErr = (await prevShort.json()) as { error: { code: string } };
+      assert.equal(prevShortErr.error.code, 'TRANSCRIPT_TOO_SHORT');
+
+      const lockShort = await fetch(`${srv.baseUrl}/api/v1/stage/4/transcript`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ transcript: shortTranscript, entryMode: 'EXPRESS' }),
+      });
+      assert.equal(lockShort.status, 422);
+      const lockShortErr = (await lockShort.json()) as { error: { code: string } };
+      assert.equal(lockShortErr.error.code, 'TRANSCRIPT_TOO_SHORT');
+
+      // T-X5: Cue-interpolated VTT requires confirmEstimated: true
+      const cueVtt = `WEBVTT
+
+00:00.000 --> 00:08.000
+Modern semiconductor lithography systems use extreme ultraviolet light to print billions of microscopic transistors across silicon wafers with extraordinary accuracy.
+
+00:08.200 --> 00:16.500
+High-numerical-aperture mirrors reflect thirteen point five nanometer wavelengths inside vacuum chambers to shrink circuit features below two nanometers reliably.
+
+00:16.800 --> 00:25.000
+This optical engineering milestone powers next-generation neural processors while reducing transistor switching energy across data centers worldwide.`;
+
+      const unconfirmedLock = await fetch(`${srv.baseUrl}/api/v1/stage/4/transcript`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          transcript: cueVtt,
+          fileName: 'captions.vtt',
+          entryMode: 'EXPRESS',
+          confirmEstimated: false,
+        }),
+      });
+      assert.equal(unconfirmedLock.status, 422);
+      const unconfErr = (await unconfirmedLock.json()) as { error: { code: string } };
+      assert.equal(unconfErr.error.code, 'ESTIMATED_TIMINGS_UNCONFIRMED');
+
+      // Confirming estimated timings succeeds AND converts the FULL project to EXPRESS (T-X6)
+      const confirmedLock = await fetch(`${srv.baseUrl}/api/v1/stage/4/transcript`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          transcript: cueVtt,
+          fileName: 'captions.vtt',
+          entryMode: 'EXPRESS',
+          confirmEstimated: true,
+        }),
+      });
+      assert.equal(confirmedLock.status, 200);
+
+      // Verify S1..S3 are EXTERNAL_PROVIDED and fileName + confirmEstimated are stored in transcript_meta_json
+      for (const st of ['S1', 'S2', 'S2.5', 'S3'] as const) {
+        assert.equal(getStageRow(db, projectId, st)?.status, 'EXTERNAL_PROVIDED');
+      }
+      const pRow = db
+        .prepare(`SELECT entry_mode, transcript_meta_json FROM projects WHERE id = ?`)
+        .get(projectId) as { entry_mode: string; transcript_meta_json: string };
+      assert.equal(pRow.entry_mode, 'EXPRESS');
+      const storedMeta = JSON.parse(pRow.transcript_meta_json) as {
+        fileName: string;
+        confirmEstimated: boolean;
+        precisionGrade: string;
+      };
+      assert.equal(storedMeta.fileName, 'captions.vtt');
+      assert.equal(storedMeta.confirmEstimated, true);
+      assert.equal(storedMeta.precisionGrade, 'CUE_INTERPOLATED');
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('T-P1 — Five transcript parser fixes: (1) integer-ms JSON & unitsOverride, (2) nested ElevenLabs alignment, (3) tagged lines #[MM-SS.mmm] WORD_EXACT_MS + lastWordEndInferred, (4) word-per-cue VTT/SRT, (5) YouTube inline-timestamp VTT', () => {
+    // 1. Integer-ms JSON [{word, start: 7143, end: 7413}, ...] -> 7.143s..7.413s, units: MILLISECONDS, grade: WORD_EXACT_MS
+    const intMsJson = JSON.stringify([
+      { word: 'First', start: 143, end: 612 },
+      { word: 'Second', start: 650, end: 1289 },
+      { word: 'Third', start: 7143, end: 7413 },
+    ]);
+    const p1 = parseExpressTranscript(intMsJson, undefined, { allowShort: true });
+    assert.equal(p1.meta.units, 'MILLISECONDS');
+    assert.equal(p1.meta.precisionGrade, 'WORD_EXACT_MS');
+    assert.equal(p1.words[2].startMs, 7143);
+    assert.equal(p1.words[2].endMs, 7413);
+    assert.equal(p1.words[2].startSec, 7.143);
+    assert.equal(p1.words[2].endSec, 7.413);
+
+    // Also test explicit startMs/endMs keys and manual unitsOverride='SECONDS' on CSV
+    const csvMs = `start,end,word\n100,450,Alpha\n500,920,Beta\n1000,1550,Gamma`;
+    const pCsvAuto = parseExpressTranscript(csvMs, undefined, { allowShort: true });
+    assert.equal(pCsvAuto.meta.units, 'MILLISECONDS');
+    assert.equal(pCsvAuto.words[0].startMs, 100);
+    const pCsvOverrideSec = parseExpressTranscript(csvMs, undefined, {
+      allowShort: true,
+      unitsOverride: 'SECONDS',
+    });
+    assert.equal(pCsvOverrideSec.meta.units, 'SECONDS');
+    assert.equal(pCsvOverrideSec.words[0].startMs, 100000);
+
+    // 2. Real ElevenLabs nested response { alignment: { characters, character_start_times_seconds, character_end_times_seconds }, normalized_alignment: {...} }
+    const nestedElevenLabs = JSON.stringify({
+      audio_base64: 'UklGRiQAAABXQVZFZm10IBAAAAABAAEA...',
+      alignment: {
+        characters: ['न', 'म', 'स्', 'ते', ' ', 'भा', 'र', 'त'],
+        character_start_times_seconds: [0.012, 0.085, 0.142, 0.215, 0.31, 0.385, 0.492, 0.588],
+        character_end_times_seconds: [0.085, 0.142, 0.215, 0.31, 0.385, 0.492, 0.588, 0.712],
+      },
+      normalized_alignment: {
+        characters: ['न', 'म', 'स्', 'ते', ' ', 'भा', 'र', 'त'],
+        character_start_times_seconds: [0.012, 0.085, 0.142, 0.215, 0.31, 0.385, 0.492, 0.588],
+        character_end_times_seconds: [0.085, 0.142, 0.215, 0.31, 0.385, 0.492, 0.588, 0.712],
+      },
+    });
+    const p2 = parseExpressTranscript(nestedElevenLabs, undefined, { allowShort: true });
+    assert.equal(p2.meta.format, 'ELEVENLABS_ALIGNMENT_JSON');
+    assert.equal(p2.meta.precisionGrade, 'WORD_EXACT_MS');
+    assert.equal(p2.words.length, 2);
+    assert.equal(p2.words[0].word, 'नमस्ते');
+    assert.equal(p2.words[1].word, 'भारत');
+    assert.equal(p2.words[0].startMs, 12);
+    assert.equal(p2.words[1].endMs, 712);
+
+    // 3. Tagged lines #[MM-SS.mmm] word graded WORD_EXACT_MS with lastWordEndInferred: true
+    const taggedExact = [
+      '#[00-00.125] Quantum',
+      '#[00-00.540] coherence',
+      '#[00-01.185] sustains',
+      '#[00-01.790] entanglement',
+    ].join('\n');
+    const p3 = parseExpressTranscript(taggedExact, undefined, { allowShort: true });
+    assert.equal(p3.meta.format, 'TAGGED_LINES');
+    assert.equal(p3.meta.precisionGrade, 'WORD_EXACT_MS');
+    assert.equal(p3.meta.hasEstimatedWords, false);
+    assert.equal(p3.words[3].lastWordEndInferred, true);
+    assert.ok(p3.meta.warnings.some((w) => w.includes('lastWordEndInferred')));
+
+    // 4. Word-per-cue VTT (>= 90% single-token cues -> word-level WORD_EXACT_MS, not CUE_INTERPOLATED)
+    const wordPerCueVtt = `WEBVTT
+
+00:00.120 --> 00:00.485
+Silicon
+
+00:00.510 --> 00:00.945
+photonics
+
+00:00.980 --> 00:01.415
+accelerates
+
+00:01.450 --> 00:01.925
+optical
+
+00:01.960 --> 00:02.475
+interconnects`;
+    const p4 = parseExpressTranscript(wordPerCueVtt, undefined, { allowShort: true });
+    assert.equal(p4.meta.format, 'WEBVTT');
+    assert.equal(p4.meta.precisionGrade, 'WORD_EXACT_MS');
+    assert.equal(p4.meta.hasEstimatedWords, false);
+    assert.equal(p4.words.length, 5);
+    assert.equal(p4.words[0].startMs, 120);
+    assert.equal(p4.words[0].endMs, 485);
+
+    // 5. YouTube inline-timestamp WebVTT (<00:00:01.230><c> word</c>) -> word-level WORD_EXACT_MS
+    const ytInlineVtt = `WEBVTT
+
+00:00:00.100 --> 00:00:02.500
+Deep <00:00:00.525><c> neural</c><00:00:01.140><c> networks</c><00:00:01.815><c> converge</c>`;
+    const p5 = parseExpressTranscript(ytInlineVtt, undefined, { allowShort: true });
+    assert.equal(p5.meta.format, 'WEBVTT');
+    assert.equal(p5.meta.precisionGrade, 'WORD_EXACT_MS');
+    assert.equal(p5.meta.hasEstimatedWords, false);
+    assert.equal(p5.words.length, 4);
+    assert.equal(p5.words[0].word, 'Deep');
+    assert.equal(p5.words[0].startMs, 100);
+    assert.equal(p5.words[0].endMs, 525);
+    assert.equal(p5.words[1].word, 'neural');
+    assert.equal(p5.words[1].startMs, 525);
+    assert.equal(p5.words[1].endMs, 1140);
+    assert.equal(p5.words[3].word, 'converge');
+    assert.equal(p5.words[3].startMs, 1815);
+    assert.equal(p5.words[3].endMs, 2500);
+  });
+
+  it('T-H1 — Hygiene & Neutrality Grep: no Master_Prompt files in public/, no bun.lock, no somaticHook15s / volumetric haze / hardcoded model strings in src, shared, or server', () => {
+    const rootDir = process.cwd();
+    assert.equal(fs.existsSync(path.join(rootDir, 'bun.lock')), false, 'bun.lock must not exist');
+
+    const aistudioAssetsDir = path.join(rootDir, 'public/assets/aistudio');
+    if (fs.existsSync(aistudioAssetsDir)) {
+      const files = fs.readdirSync(aistudioAssetsDir);
+      assert.equal(
+        files.some((f) => f.includes('Master_Prompt')),
+        false,
+        'Master_Prompt asset must be removed from public/assets/aistudio'
+      );
+    }
+
+    const forbiddenPatterns = [
+      'somaticHook15s',
+      'volumetric haze',
+      'proj-alpha-01',
+      'text-embedding-004',
+      'LATIN_PHONETIC_MAP',
+      'FALLBACK_OVERLAY_BANK',
+      'synthesizeWordTimings',
+      'cinematic documentary frame',
+      'Documentary Niche',
+      'AIza',
+    ];
+
+    function scanDir(dir: string): void {
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          scanDir(full);
+        } else if (entry.name.endsWith('.ts') || entry.name.endsWith('.tsx')) {
+          if (full.endsWith(path.join('src', 'config', 'constants.ts'))) continue;
+          const content = fs.readFileSync(full, 'utf8');
+          for (const pat of forbiddenPatterns) {
+            assert.equal(
+              content.includes(pat),
+              false,
+              `Forbidden string "${pat}" found in ${full}`
+            );
+          }
+        }
+      }
+    }
+
+    scanDir(path.join(rootDir, 'src'));
+    scanDir(path.join(rootDir, 'shared'));
+    scanDir(path.join(rootDir, 'server'));
   });
 });

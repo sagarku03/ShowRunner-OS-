@@ -8,7 +8,7 @@ import { commitStageState } from '../fsm/machine.ts';
 import type { GeminiGateway, GroundingChunkSource } from '../llm/gemini.ts';
 import { buildMasterPromptInjectionBlock } from './s0MasterPrompt.ts';
 import { buildChannelDnaPromptBlock, getLockedChannelDna } from './s0bChannelDna.ts';
-import type { Stage1TopicsPayload } from './s1Topics.ts';
+import { readTopicHook15s, type Stage1TopicsPayload } from './s1Topics.ts';
 
 export interface ShockPoint {
   fact: string;
@@ -226,10 +226,11 @@ export async function handleRunResearch(
     masterBlock,
   ].join('\n');
 
+  const lockedTopicHook = readTopicHook15s(s1.lockedTopic as unknown as Record<string, unknown>);
   const step2aUserPrompt = [
     `Locked Topic: ${s1.lockedTopic.title}`,
     `Core Paradox: ${s1.lockedTopic.coreParadox || s1.lockedTopic.paradox}`,
-    `15s Hook: ${s1.lockedTopic.somaticHook15s || s1.lockedTopic.hook}`,
+    `15s Hook: ${lockedTopicHook}`,
     `Channel Niche: ${s1.niche}`,
     'Conduct grounded web research and output a detailed factual markdown brief with explicit URLs.',
   ].join('\n');
@@ -343,7 +344,7 @@ export async function handleRunResearch(
     topicTitle: s1.lockedTopic.title,
     step2aMarkdown: step2aResult.markdown,
     shockPoint: step2bResponse.data.shockPoint || {
-      fact: verifiedClaims[0]?.claim || s1.lockedTopic.somaticHook15s,
+      fact: verifiedClaims[0]?.claim || lockedTopicHook,
       source: verifiedClaims[0]?.sourceTitle || 'Grounded Study',
       link: verifiedClaims[0]?.sourceUrl || groundingUris[0] || markdownUrls[0] || '',
     },

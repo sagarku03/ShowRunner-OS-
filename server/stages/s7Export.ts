@@ -3,6 +3,7 @@ import type { DatabaseSync } from 'node:sqlite';
 import { Type, type Schema } from '@google/genai';
 import {
   ABOVE_THE_FOLD_DESC_CHARS,
+  APP_VERSION,
   EMRI_MAX_PASS,
   MAX_TAG_CHARS,
   MAX_TITLE_CHARS,
@@ -28,9 +29,9 @@ export interface PackagingVariant {
   id: 'PACK_A' | 'PACK_B' | 'PACK_C';
   variantName: string;
   archetype:
-    | 'Acute Somatic Shock'
+    | 'Immediate Visceral Shock'
     | 'High-Stakes Conflict'
-    | 'Somatic Vulnerability / Scale Paradox';
+    | 'Human Scale Paradox';
   title: string;
   overlayText: string;
   thumbnailPrompt: string;
@@ -349,11 +350,11 @@ export async function handleGeneratePackaging(
     first30sWords.trim() || s3?.paragraphs[0]?.text || shockPointFact || topicTitle;
 
   const systemInstruction = [
-    'You are the Stage 7 Packaging, Thumbnail FACS & SEO Engine for ShowRunner OS v1.3.0.',
+    'You are the Stage 7 Packaging, Thumbnail FACS & SEO Engine for ShowRunner OS v1.3.1.',
     'Generate 3 distinct packaging variants:',
-    '- PACK_A: Acute Somatic Shock',
+    '- PACK_A: Immediate Visceral Shock',
     '- PACK_B: High-Stakes Conflict',
-    '- PACK_C: Somatic Vulnerability / Scale Paradox (subject occupies ~35% of frame height against massive architectural/environmental scale)',
+    '- PACK_C: Human Scale Paradox (subject occupies ~35% of frame height against massive architectural/environmental scale)',
     'Rules for each variant:',
     `1. title MUST be strictly under ${titleCharCap} characters.`,
     `2. overlayText MUST be 2-${maxOverlayWords} bold words with ZERO word overlap with title.`,
@@ -371,8 +372,8 @@ export async function handleGeneratePackaging(
   }> = [
     {
       id: 'PACK_A',
-      variantName: 'Pack A — Acute Somatic Shock',
-      archetype: 'Acute Somatic Shock',
+      variantName: 'Pack A — Immediate Visceral Shock',
+      archetype: 'Immediate Visceral Shock',
       subjectScalePercent: 68,
     },
     {
@@ -383,8 +384,8 @@ export async function handleGeneratePackaging(
     },
     {
       id: 'PACK_C',
-      variantName: 'Pack C — Somatic Vulnerability (35% Scale Paradox)',
-      archetype: 'Somatic Vulnerability / Scale Paradox',
+      variantName: 'Pack C — Human Scale Paradox (35% Scale)',
+      archetype: 'Human Scale Paradox',
       subjectScalePercent: 35,
     },
   ];
@@ -814,16 +815,25 @@ export async function buildMasterExportZip(
     )
   );
 
+  const precisionGrade =
+    s4.meta?.precisionGrade ??
+    (s4.meta?.hasEstimatedWords ? 'CUE_INTERPOLATED' : 'WORD_EXACT_MS');
+
   zip.file(
     'Project_Manifest.json',
     JSON.stringify(
       {
-        version: '1.3.0',
+        version: APP_VERSION,
         projectId,
         exportedAt: new Date().toISOString(),
         mode: s5.mode,
         provider: s5.provider,
         actualDurationSec: s4.actualDurationSec,
+        transcriptFormat: s4.meta?.format ?? 'UNKNOWN',
+        transcriptPrecisionGrade: precisionGrade,
+        hasEstimatedWords: Boolean(s4.meta?.hasEstimatedWords),
+        confirmEstimated: Boolean(s4.meta?.confirmEstimated),
+        transcriptFileName: s4.meta?.fileName ?? null,
         slotCount: s5.slotCount,
         packCount: s6.packCount,
         selectedPackId: s7.selectedPackId,
@@ -840,7 +850,7 @@ export async function buildMasterExportZip(
   const buffer = await zip.generateAsync({ type: 'nodebuffer' });
 
   return {
-    fileName: `ShowRunner_${projectId}_v1.3.0_MasterBundle.zip`,
+    fileName: `ShowRunner_${projectId}_v${APP_VERSION}_MasterBundle.zip`,
     buffer,
   };
 }

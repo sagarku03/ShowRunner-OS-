@@ -27,6 +27,7 @@ interface ChannelDnaWizardProps {
   hasValidKey: boolean;
   onClose: () => void;
   onLocked: (dna: ChannelDnaRecord) => Promise<void>;
+  onJumpToExpress?: () => void;
   onNotify: (msg: string, tone?: 'success' | 'warn' | 'error', err?: unknown) => void;
 }
 
@@ -38,6 +39,7 @@ export const ChannelDnaWizard: React.FC<ChannelDnaWizardProps> = ({
   hasValidKey,
   onClose,
   onLocked,
+  onJumpToExpress,
   onNotify,
 }) => {
   const [step, setStep] = useState<'PATH' | 'INPUT' | 'OPTIONS' | 'REVIEW'>(
@@ -230,10 +232,10 @@ export const ChannelDnaWizard: React.FC<ChannelDnaWizardProps> = ({
             </div>
             <div>
               <h2 className="text-sm font-bold text-white">
-                Stage S0B — Channel DNA & Style Lock
+                Stage S0B — Channel DNA &amp; Style Lock
               </h2>
               <p className="text-[11px] text-slate-400">
-                Universal Style Profile for Any Niche & Language
+                Universal Style Profile for Any Niche &amp; Language
               </p>
             </div>
           </div>
@@ -311,6 +313,25 @@ export const ChannelDnaWizard: React.FC<ChannelDnaWizardProps> = ({
                   <p className="text-[11px] text-slate-400 mt-0.5">
                     Blends structural DNA from up to 3 channels with an automatic similarity guard
                     (&le; 0.78) to prevent cloning.
+                  </p>
+                </div>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  onClose();
+                  onJumpToExpress?.();
+                }}
+                className="w-full p-4 rounded-2xl bg-violet-500/15 hover:bg-violet-500/25 border border-violet-500/40 text-left flex items-start gap-3 transition-all"
+              >
+                <Sparkles className="w-5 h-5 text-violet-300 shrink-0 mt-0.5" />
+                <div>
+                  <div className="text-xs font-bold text-white">
+                    I already have my voiceover transcript (Express)
+                  </div>
+                  <p className="text-[11px] text-slate-300 mt-0.5">
+                    Skip Topics, Research &amp; Script — lock Quick Style inline, upload your .vtt/.srt/.json transcript, and slice your storyboard immediately.
                   </p>
                 </div>
               </button>
