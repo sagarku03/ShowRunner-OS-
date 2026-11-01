@@ -41,6 +41,7 @@ import type {
 } from '../types/showrunner.ts';
 import { apiRequest } from '../utils/apiClient.ts';
 import { ChannelDnaWizard } from './ChannelDnaWizard.tsx';
+import { MasterPromptCard } from './MasterPromptCard.tsx';
 
 interface VaultHubProps {
   keys: VaultKeyItem[];
@@ -125,14 +126,6 @@ export const VaultHub: React.FC<VaultHubProps> = ({
     activeProject?.targetDuration ?? 11
   );
 
-  // Part B: Master Prompt Override state
-  const [masterPromptText, setMasterPromptText] = useState<string>(
-    masterPromptState?.text ?? activeProject?.masterPrompt ?? ''
-  );
-  const [extractedSettings, setExtractedSettings] = useState<MasterPromptExtraction>(() =>
-    safeExtractedSettings(masterPromptState?.extracted ?? activeProject?.masterPromptExtracted)
-  );
-  const [analysingMasterPrompt, setAnalysingMasterPrompt] = useState(false);
 
   // Part C: Channel DNA Wizard state
   const [showDnaWizard, setShowDnaWizard] = useState(false);
@@ -179,21 +172,8 @@ export const VaultHub: React.FC<VaultHubProps> = ({
       setClipDuration(activeProject.defaultClipDuration);
       setConfiguredWpm(activeProject.configuredWpm);
       setTargetDuration(activeProject.targetDuration);
-      setMasterPromptText(activeProject.masterPrompt ?? '');
-      if (activeProject.masterPromptExtracted) {
-        setExtractedSettings(safeExtractedSettings(activeProject.masterPromptExtracted));
-      }
     }
   }, [activeProject]);
-
-  React.useEffect(() => {
-    if (masterPromptState) {
-      setMasterPromptText(masterPromptState.text ?? '');
-      if (masterPromptState.extracted) {
-        setExtractedSettings(safeExtractedSettings(masterPromptState.extracted));
-      }
-    }
-  }, [masterPromptState]);
 
   const validGeminiKeys = keys.filter(
     (k) => (k.status === 'VALID' || k.status === 'ACTIVE') && k.keyType !== 'YOUTUBE'
@@ -335,50 +315,6 @@ export const VaultHub: React.FC<VaultHubProps> = ({
     }
   };
 
-  const handleAnalyseAndSaveMasterPrompt = async (skipLlmExtraction = false) => {
-    if (!activeProject) {
-      onNotify('Create or select a project first', 'warn');
-      return;
-    }
-    setAnalysingMasterPrompt(true);
-    try {
-      const res = await apiRequest<{
-        masterPrompt?: MasterPromptState;
-        extracted?: MasterPromptExtraction;
-        isUniversalMode?: boolean;
-        extractionError?: string | null;
-      }>('/api/v1/stage/0/master-prompt', {
-        method: 'PUT',
-        body: {
-          text: masterPromptText,
-          extractedOverride: skipLlmExtraction ? extractedSettings : undefined,
-          skipLlmExtraction,
-        },
-      });
-      const resolvedMasterPrompt = res.masterPrompt ?? (res as unknown as MasterPromptState);
-      const extractedObj = safeExtractedSettings(
-        resolvedMasterPrompt?.extracted ?? res.extracted
-      );
-      setExtractedSettings(extractedObj);
-      await onRefreshState();
-      const isUniversal = resolvedMasterPrompt?.isUniversalMode ?? res.isUniversalMode;
-      const extractionErr = resolvedMasterPrompt?.extractionError ?? res.extractionError;
-      if (extractionErr) {
-        onNotify(`Master prompt text saved (${extractionErr})`, 'warn');
-      } else {
-        onNotify(
-          isUniversal
-            ? `Reset to ${UNIVERSAL_CREATOR_MODE_LABEL}`
-            : 'Master Prompt analysed & locked',
-          'success'
-        );
-      }
-    } catch (err) {
-      onNotify((err as Error).message, 'error', err);
-    } finally {
-      setAnalysingMasterPrompt(false);
-    }
-  };
 
   const handleUnlockDna = async () => {
     if (!activeProject) return;
@@ -440,7 +376,18 @@ export const VaultHub: React.FC<VaultHubProps> = ({
 
   return (
     <div className="space-y-5 pb-28">
-      {/* 1. API Keys & Live Validation (Part A1) */}
+      {/* 1. Master Prompt & Channel Profile (Stage 0 Master-Prompt-First) */}
+      <MasterPromptCard
+        activeProject={activeProject}
+        masterPromptState={masterPromptState}
+        channelDna={channelDna}
+        hasValidKey={hasValidKey}
+        onRefreshState={onRefreshState}
+        onNavigateHub={onNavigateHub}
+        onNotify={onNotify}
+      />
+
+      {/* 2. API Keys & Live Validation (Part A1) */}
       <section className="liquid-glass p-5 space-y-4">
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-2.5">
@@ -449,7 +396,7 @@ export const VaultHub: React.FC<VaultHubProps> = ({
             </div>
             <div>
               <h2 className="text-base font-semibold tracking-tight text-white">
-                1. API Keys & Live Health
+                2. API Keys & Live Health
               </h2>
               <p className="text-xs text-slate-400">
                 AES-256-GCM Vault • Live Probe Verification
@@ -573,7 +520,7 @@ export const VaultHub: React.FC<VaultHubProps> = ({
         </form>
       </section>
 
-      {/* 2. Model Tier Selection & Smart Tiering (Part A1 & C10) */}
+      {/* 3. Model Tier Selection & Smart Tiering (Part A1 & C10) */}
       <section className="liquid-glass p-5 space-y-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2.5">
@@ -582,7 +529,7 @@ export const VaultHub: React.FC<VaultHubProps> = ({
             </div>
             <div>
               <h2 className="text-base font-semibold tracking-tight text-white">
-                2. Model Tier Selection
+                3. Model Tier Selection & Smart Tiering
               </h2>
               <p className="text-xs text-slate-400">
                 Discovered Reasoning, Fast & Embedding Models Only
@@ -682,7 +629,7 @@ export const VaultHub: React.FC<VaultHubProps> = ({
         </div>
       </section>
 
-      {/* 3. Channel DNA & Style Lock Card (Part C & C10) */}
+      {/* 4. Channel DNA & Style Lock Card (Part C & C10) */}
       <section className="liquid-glass p-5 space-y-4 border-emerald-500/30">
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-2.5">
@@ -691,7 +638,7 @@ export const VaultHub: React.FC<VaultHubProps> = ({
             </div>
             <div>
               <h2 className="text-base font-semibold tracking-tight text-white">
-                3. Channel DNA & Style Lock (S0B)
+                4. Channel DNA & Style Lock (S0B)
               </h2>
               <p className="text-xs text-slate-400">
                 Required before Stage 1 • Drives Language, Pacing & Visuals
@@ -699,9 +646,17 @@ export const VaultHub: React.FC<VaultHubProps> = ({
             </div>
           </div>
           {channelDna ? (
-            <span className="px-2.5 py-1 rounded-xl bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 font-mono text-xs">
-              LOCKED v{channelDna.version}
-            </span>
+            <div className="flex items-center gap-2">
+              {(channelDna.source === 'MASTER_PROMPT' ||
+                (channelDna as any)?.dna?.source === 'MASTER_PROMPT') && (
+                <span className="px-2.5 py-1 rounded-xl bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 text-xs font-medium">
+                  Auto-filled from your Master Prompt
+                </span>
+              )}
+              <span className="px-2.5 py-1 rounded-xl bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 font-mono text-xs">
+                LOCKED v{channelDna.version}
+              </span>
+            </div>
           ) : (
             <span className="px-2.5 py-1 rounded-xl bg-amber-500/15 text-amber-300 border border-amber-500/30 font-mono text-xs">
               UNLOCKED
@@ -754,7 +709,7 @@ export const VaultHub: React.FC<VaultHubProps> = ({
         ) : (
           <div className="liquid-glass-subtle p-4 space-y-3">
             <p className="text-xs text-slate-300">
-              No Channel DNA is locked yet. Configure your channel profile from an existing
+              No Channel DNA is locked yet. Configure your channel profile from your Master Prompt, an existing
               YouTube channel, a new niche, or 1–3 reference channels to unlock Stage 1.
             </p>
             <button
@@ -768,154 +723,6 @@ export const VaultHub: React.FC<VaultHubProps> = ({
             </button>
           </div>
         )}
-      </section>
-
-      {/* 4. Master Prompt Override Card (Part B & C10) */}
-      <section className="liquid-glass p-5 space-y-4">
-        <div className="flex items-center justify-between gap-2">
-          <div className="flex items-center gap-2.5">
-            <div className="w-9 h-9 rounded-2xl bg-cyan-500/15 border border-cyan-500/30 flex items-center justify-center text-cyan-400">
-              <FileText className="w-4 h-4" />
-            </div>
-            <div>
-              <h2 className="text-base font-semibold tracking-tight text-white">
-                4. Master Prompt Override (Stage 0)
-              </h2>
-              <p className="text-xs text-slate-400">
-                Custom Persona, Chapter Overrides, Negative Prompts & Banned Words
-              </p>
-            </div>
-          </div>
-          <span className="px-2.5 py-1 rounded-xl bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 text-[10px] font-mono">
-            {!masterPromptText.trim()
-              ? UNIVERSAL_CREATOR_MODE_LABEL
-              : 'Custom Override Active'}
-          </span>
-        </div>
-
-        <div className="space-y-2">
-          <div className="flex items-center justify-between text-[11px] text-slate-400">
-            <span>Master System Override Text</span>
-            <div className="flex items-center gap-2">
-              <span className="font-mono">{masterPromptText.length} chars</span>
-              {masterPromptText && (
-                <button
-                  type="button"
-                  onClick={() => setMasterPromptText('')}
-                  className="text-rose-400 hover:underline"
-                >
-                  Clear
-                </button>
-              )}
-            </div>
-          </div>
-          <textarea
-            rows={8}
-            value={masterPromptText}
-            onChange={(e) => setMasterPromptText(e.target.value)}
-            placeholder="Paste optional Master Prompt Override here (persona, custom chapters, brand name, negative prompts, tone words, banned words). Leave empty for Universal Any-Niche Creator Mode."
-            className="w-full p-3.5 rounded-2xl bg-slate-900/80 border border-white/10 text-xs text-white leading-relaxed"
-          />
-        </div>
-
-        <div className="flex gap-2">
-          <button
-            type="button"
-            disabled={analysingMasterPrompt || !activeProject}
-            onClick={() => handleAnalyseAndSaveMasterPrompt(false)}
-            className="flex-1 py-2.5 rounded-xl bg-cyan-500/20 hover:bg-cyan-500/30 disabled:opacity-40 text-cyan-200 border border-cyan-500/30 text-xs font-semibold flex items-center justify-center gap-1.5"
-          >
-            <Sparkles className="w-3.5 h-3.5" />
-            {analysingMasterPrompt ? 'Analysing Prompt...' : 'Analyse Prompt & Save'}
-          </button>
-          <button
-            type="button"
-            disabled={analysingMasterPrompt || !activeProject}
-            onClick={() => handleAnalyseAndSaveMasterPrompt(true)}
-            className="px-4 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 disabled:opacity-40 text-slate-950 text-xs font-semibold"
-          >
-            Save Edited Fields
-          </button>
-        </div>
-
-        {/* Editable Extracted Settings Preview */}
-        <div className="liquid-glass-subtle p-3.5 space-y-2.5">
-          <div className="text-xs font-semibold text-white">
-            Extracted Settings Preview (Editable)
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-            <div>
-              <label className="block text-[10px] text-slate-400 mb-0.5">Persona</label>
-              <input
-                type="text"
-                value={extractedSettings?.persona ?? ''}
-                onChange={(e) =>
-                  setExtractedSettings((prev) => ({
-                    ...safeExtractedSettings(prev),
-                    persona: e.target.value,
-                  }))
-                }
-                placeholder="Extracted persona..."
-                className="w-full px-2.5 py-1.5 rounded-lg bg-slate-950 border border-white/10 text-xs text-white"
-              />
-            </div>
-            <div>
-              <label className="block text-[10px] text-slate-400 mb-0.5">Brand Name</label>
-              <input
-                type="text"
-                value={extractedSettings?.brandName ?? ''}
-                onChange={(e) =>
-                  setExtractedSettings((prev) => ({
-                    ...safeExtractedSettings(prev),
-                    brandName: e.target.value,
-                  }))
-                }
-                placeholder="Brand override..."
-                className="w-full px-2.5 py-1.5 rounded-lg bg-slate-950 border border-white/10 text-xs text-white"
-              />
-            </div>
-            <div>
-              <label className="block text-[10px] text-slate-400 mb-0.5">
-                Custom Chapters (comma separated)
-              </label>
-              <input
-                type="text"
-                value={(extractedSettings?.customChapters ?? []).join(', ')}
-                onChange={(e) =>
-                  setExtractedSettings((prev) => ({
-                    ...safeExtractedSettings(prev),
-                    customChapters: e.target.value
-                      .split(',')
-                      .map((s) => s.trim())
-                      .filter(Boolean),
-                  }))
-                }
-                placeholder="Hook, Deep Dive, Payoff..."
-                className="w-full px-2.5 py-1.5 rounded-lg bg-slate-950 border border-white/10 text-xs text-white"
-              />
-            </div>
-            <div>
-              <label className="block text-[10px] text-slate-400 mb-0.5">
-                Banned Words (comma separated, C05)
-              </label>
-              <input
-                type="text"
-                value={(extractedSettings?.bannedWords ?? []).join(', ')}
-                onChange={(e) =>
-                  setExtractedSettings((prev) => ({
-                    ...safeExtractedSettings(prev),
-                    bannedWords: e.target.value
-                      .split(',')
-                      .map((s) => s.trim())
-                      .filter(Boolean),
-                  }))
-                }
-                placeholder="synergy, delve..."
-                className="w-full px-2.5 py-1.5 rounded-lg bg-slate-950 border border-white/10 text-xs text-white"
-              />
-            </div>
-          </div>
-        </div>
       </section>
 
       {/* 5. Brand, Pacing & Generation Mode Calibration */}

@@ -152,20 +152,25 @@ export async function handleBuildArchitecture(
   );
   const wpm = Math.min(WPM_MAX, Math.max(WPM_MIN, Number.isFinite(rawWpm) ? rawWpm : DEFAULT_WPM));
 
-  // Part B & C8: Master Prompt customChapters override Harmon template when provided;
+  // Part B & C8: MASTER_PROMPT chapters override when locked with >= 2 chapters;
+  // otherwise Master Prompt customChapters override Harmon template when provided;
   // otherwise non-DOCUMENTARY DNA formatPreset chapters override when provided.
   const wordBudget =
-    masterState.extracted.customChapters.length > 0
+    lockedDna?.source === 'MASTER_PROMPT' && lockedDna.structure.chapters.length >= 2
       ? calculateWordBudget(resolvedMinutes, wpm, {
-          customChapterTitles: masterState.extracted.customChapters,
+          customPhases: lockedDna.structure.chapters,
         })
-      : lockedDna &&
-          lockedDna.structure.formatPreset !== 'DOCUMENTARY' &&
-          lockedDna.structure.chapters.length > 0
+      : masterState.extracted.customChapters.length > 0
         ? calculateWordBudget(resolvedMinutes, wpm, {
-            customPhases: lockedDna.structure.chapters,
+            customChapterTitles: masterState.extracted.customChapters,
           })
-        : calculateWordBudget(resolvedMinutes, wpm);
+        : lockedDna &&
+            lockedDna.structure.formatPreset !== 'DOCUMENTARY' &&
+            lockedDna.structure.chapters.length > 0
+          ? calculateWordBudget(resolvedMinutes, wpm, {
+              customPhases: lockedDna.structure.chapters,
+            })
+          : calculateWordBudget(resolvedMinutes, wpm);
 
   const s2Row = getStageRow(db, projectId, 'S2');
   if (!s2Row) {

@@ -32,7 +32,7 @@ import {
   type YouTubeVideoMeta,
 } from '../youtube/client.ts';
 
-export type ChannelDnaSource = 'ANALYSED' | 'NICHE' | 'HYBRID' | 'EXPRESS';
+export type ChannelDnaSource = 'ANALYSED' | 'NICHE' | 'HYBRID' | 'EXPRESS' | 'MASTER_PROMPT';
 export type ChannelDnaRecord = ChannelDNA;
 
 export interface ChannelDNA {

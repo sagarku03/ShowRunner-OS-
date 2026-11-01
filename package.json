@@ -7,7 +7,7 @@
     "dev": "tsx server/index.ts",
     "typecheck": "tsc --noEmit",
     "lint": "tsc --noEmit",
-    "test": "tsx --test tests/all.test.ts",
+    "test": "tsx --test tests/all.test.ts tests/masterPromptProfile.test.ts",
     "check": "bash scripts/secret-scan.sh",
     "build": "rm -rf dist dist-server && vite build && esbuild server/index.ts --bundle --platform=node --format=esm --target=node22 --packages=external --outfile=dist-server/server.mjs",
     "start": "node --expose-gc dist-server/server.mjs",

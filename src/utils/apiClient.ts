@@ -98,10 +98,17 @@ export async function apiRequest<T>(
     headers['X-Project-Id'] = projectId;
   }
 
+  const requestBody =
+    options?.body !== undefined
+      ? typeof options.body === 'string'
+        ? options.body
+        : JSON.stringify(options.body)
+      : undefined;
+
   const response = await fetch(path, {
     method: options?.method ?? 'GET',
     headers,
-    body: options?.body !== undefined ? JSON.stringify(options.body) : undefined,
+    body: requestBody,
   });
 
   const json = (await response.json().catch(() => null)) as

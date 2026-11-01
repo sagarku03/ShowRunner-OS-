@@ -136,7 +136,23 @@ export function mapGeminiError(err: unknown, keyLabel?: string): MappedGeminiErr
     };
   }
 
-  // 5. Bad Request / Schema + Grounding conflict (400)
+  // 5. JSON parse failure
+  if (
+    err instanceof SyntaxError ||
+    lower.includes('unexpected token') ||
+    lower.includes('json at position') ||
+    lower.includes('json parse')
+  ) {
+    return {
+      code: 'LLM_JSON_PARSE_FAILED',
+      httpStatus: 400,
+      userMessage: 'Malformed JSON payload received. Click Retry to run structured generation again.',
+      retryable: false,
+      raw: rawMsg,
+    };
+  }
+
+  // 6. Bad Request / Schema + Grounding conflict (400)
   if (
     explicitStatus === 400 ||
     lower.includes('http 400') ||

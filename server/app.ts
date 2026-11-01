@@ -799,15 +799,24 @@ export function createShowRunnerApp(options: CreateAppOptions): Express {
     async (req: Request, res: Response, next: NextFunction) => {
       try {
         const projectId = requireProjectId(db, req);
-        const body = (req.body ?? {}) as Record<string, unknown>;
+        let parsedBody = req.body;
+        if (typeof parsedBody === 'string') {
+          try {
+            parsedBody = JSON.parse(parsedBody);
+          } catch {
+            parsedBody = { text: parsedBody };
+          }
+        }
+        const body = (parsedBody ?? {}) as Record<string, unknown>;
         const state = await handleSaveMasterPrompt({
           db,
           projectId,
-          text: typeof body.text === 'string' ? body.text : '',
+          text: typeof body.text === 'string' ? body.text : (typeof parsedBody === 'string' ? parsedBody : ''),
           extractedOverride: body.extractedOverride as
             | Partial<MasterPromptExtraction>
             | undefined,
           gemini,
+          skipLlmExtraction: Boolean(body.skipLlmExtraction),
         });
         res.json({
           ok: true,
@@ -2278,6 +2287,21 @@ export function createShowRunnerApp(options: CreateAppOptions): Express {
           userMessage: err.message,
           retryable: false,
           details: { keyId: err.keyId },
+        },
+      });
+      return;
+    }
+
+    if (err instanceof SyntaxError && 'status' in err && (err as Record<string, unknown>).status === 400 && 'body' in err) {
+      res.status(400).json({
+        ok: false,
+        error: {
+          code: 'INVALID_REQUEST_BODY',
+          httpStatus: 400,
+          message: 'Invalid JSON request payload.',
+          userMessage: 'The request payload is not valid JSON. Please verify your input formatting.',
+          retryable: false,
+          raw: (err as Error).message,
         },
       });
       return;

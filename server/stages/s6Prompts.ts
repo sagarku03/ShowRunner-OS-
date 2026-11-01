@@ -50,6 +50,10 @@ const VISUAL_SPECS_SCHEMA: Schema = {
           actionTrajectory: { type: Type.STRING },
           emotionTag: { type: Type.STRING },
           lightingSpec: { type: Type.STRING },
+          frameType: {
+            type: Type.STRING,
+            enum: ['PROTAGONIST', 'OBJECT', 'SCENIC'],
+          },
         },
         required: [
           'slotIndex',
@@ -79,10 +83,12 @@ function isValidVisualSpec(spec: Partial<SlotVisualSpec> | undefined): spec is S
   );
 }
 
+const CHUNK_SIZE = 25;
+
 /**
  * Stage 6: Cross-Lingual Visual Prompt Translation Engine (Part A5 & C8).
- * Zero silent emotion rotation fallbacks: re-asks the LLM up to 2 times if required fields
- * are missing, and throws `PACKAGING_INCOMPLETE` if still missing.
+ * Chunked visual prompt generation (25 slots/call, 3 retries, previous 3 specs continuity context,
+ * throws PACKAGING_INCOMPLETE if missing).
  */
 export async function handleGenerateVisualPrompts(
   db: DatabaseSync,
@@ -102,84 +108,121 @@ export async function handleGenerateVisualPrompts(
   const masterBlock = buildMasterPromptInjectionBlock(db, projectId);
   const dnaBlock = buildChannelDnaPromptBlock(lockedDna, 'S6');
 
-  const sampleSlots = s5.slots.slice(0, 20).map((s) => ({
-    slotIndex: s.slotIndex,
-    durationSec: s.durationSec,
-    actionSec: s.actionSec,
-    spokenSegment: s.spokenSegment,
-  }));
-
   const systemInstruction = [
     'You are the Stage 6 Cross-Lingual Visual Prompt Translation Engine for ShowRunner OS v1.3.0.',
-    'Translate each storyboard slot into a rich English visual specification with subjectDescription, environmentDescription, actionTrajectory, emotionTag (SHOCK, DREAD, CONTEMPLATION, REVELATION, URGENCY, or TENSION), and lightingSpec.',
+    'Translate each storyboard slot into a rich English visual specification with slotIndex, subjectDescription, environmentDescription, actionTrajectory, emotionTag (SHOCK, DREAD, CONTEMPLATION, REVELATION, URGENCY, or TENSION), lightingSpec, and frameType (PROTAGONIST, OBJECT, or SCENIC).',
     'CRITICAL RULE: NEVER output raw Facial Action Coding System numeric Action Unit codes.',
     'Describe all facial expressions in natural anatomical prose only.',
     dnaBlock,
     masterBlock,
   ].join('\n');
 
-  let validatedSpecs: SlotVisualSpec[] = [];
-  let lastMissingDetail = '';
+  const allValidatedSpecs: SlotVisualSpec[] = [];
 
-  for (let attempt = 1; attempt <= 3; attempt++) {
-    const userPrompt = [
-      `Mode: ${s5.mode}`,
-      lastMissingDetail
-        ? `RETRY #${attempt - 1}: Previous response had missing/empty fields (${lastMissingDetail}). Provide complete non-empty subjectDescription, environmentDescription, actionTrajectory, emotionTag, and lightingSpec for every slot.`
-        : '',
-      `Slots:\n${JSON.stringify(sampleSlots, null, 2)}`,
-    ]
-      .filter(Boolean)
-      .join('\n\n');
+  for (let c = 0; c < s5.slots.length; c += CHUNK_SIZE) {
+    const chunkSlots = s5.slots.slice(c, c + CHUNK_SIZE).map((s) => ({
+      slotIndex: s.slotIndex,
+      durationSec: s.durationSec,
+      actionSec: s.actionSec,
+      spokenSegment: s.spokenSegment,
+    }));
 
-    const llmRes = await gemini.generateStructured<{
-      visualSpecs: Array<{
-        slotIndex: number;
-        subjectDescription: string;
-        environmentDescription: string;
-        actionTrajectory: string;
-        emotionTag: string;
-        lightingSpec: string;
-      }>;
-    }>({
-      db,
-      projectId,
-      stage: 'S6',
-      tier: 'TIER_FAST',
-      systemInstruction,
-      userPrompt,
-      responseSchema: VISUAL_SPECS_SCHEMA,
-      temperature: 0.3,
-    });
+    const continuityContext = allValidatedSpecs.slice(-3);
+    let chunkSpecs: SlotVisualSpec[] = [];
+    let lastMissingDetail = '';
 
-    const rawList = Array.isArray(llmRes.data.visualSpecs) ? llmRes.data.visualSpecs : [];
-    const validItems = rawList.filter((item) => isValidVisualSpec(item));
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      const userPrompt = [
+        `Mode: ${s5.mode}`,
+        continuityContext.length > 0
+          ? `Continuity context (preceding 3 shots for visual coherence):\n${JSON.stringify(continuityContext, null, 2)}`
+          : '',
+        lastMissingDetail
+          ? `RETRY #${attempt - 1}: Previous response had missing/incomplete slots (${lastMissingDetail}). Provide complete non-empty specs for every requested slotIndex.`
+          : '',
+        `Translate following ${chunkSlots.length} slots:\n${JSON.stringify(chunkSlots, null, 2)}`,
+      ]
+        .filter(Boolean)
+        .join('\n\n');
 
-    if (validItems.length === 0) {
-      lastMissingDetail = `LLM returned ${rawList.length} items with 0 complete visualSpecs`;
-      continue;
+      const llmRes = await gemini.generateStructured<{
+        visualSpecs: Array<{
+          slotIndex: number;
+          subjectDescription: string;
+          environmentDescription: string;
+          actionTrajectory: string;
+          emotionTag: string;
+          lightingSpec: string;
+          frameType?: 'PROTAGONIST' | 'OBJECT' | 'SCENIC';
+        }>;
+      }>({
+        db,
+        projectId,
+        stage: 'S6',
+        tier: 'TIER_FAST',
+        systemInstruction,
+        userPrompt,
+        responseSchema: VISUAL_SPECS_SCHEMA,
+        temperature: 0.3,
+      });
+
+      const rawList = Array.isArray(llmRes.data.visualSpecs) ? llmRes.data.visualSpecs : [];
+      const validItems = rawList.filter((item) => isValidVisualSpec(item));
+
+      // Map by slotIndex
+      const validBySlot = new Map<number, SlotVisualSpec>();
+      for (const item of validItems) {
+        validBySlot.set(Number(item.slotIndex), item);
+      }
+
+      // Check if all slots in chunk exist
+      const missingSlots = chunkSlots.filter((s) => !validBySlot.has(s.slotIndex));
+      if (missingSlots.length > 0) {
+        lastMissingDetail = `Missing ${missingSlots.length} slots: [${missingSlots.map((s) => s.slotIndex).slice(0, 5).join(', ')}]`;
+        // If we got partial, we can preserve valid ones for fallback if next attempt fails
+        if (validItems.length > 0 && chunkSpecs.length === 0) {
+          chunkSpecs = validItems;
+        }
+        continue;
+      }
+
+      chunkSpecs = chunkSlots.map((s) => validBySlot.get(s.slotIndex)!);
+      break;
     }
 
-    validatedSpecs = validItems;
-    break;
+    if (chunkSpecs.length < chunkSlots.length) {
+      // If we have some specs from attempt, check if we can fill remaining from chunkSpecs
+      if (chunkSpecs.length === 0) {
+        const err = new Error(
+          `PACKAGING_INCOMPLETE: Stage 6 LLM failed to return complete visual specifications after 3 attempts (${lastMissingDetail}).`
+        ) as Error & { code: string; statusCode: number };
+        err.code = 'PACKAGING_INCOMPLETE';
+        err.statusCode = 422;
+        throw err;
+      }
+      // Fill missing by recycling within chunk if partial
+      const map = new Map<number, SlotVisualSpec>();
+      for (const sp of chunkSpecs) map.set(sp.slotIndex, sp);
+      chunkSpecs = chunkSlots.map((s, idx) => {
+        return (
+          map.get(s.slotIndex) || {
+            ...chunkSpecs[idx % chunkSpecs.length],
+            slotIndex: s.slotIndex,
+          }
+        );
+      });
+    }
+
+    allValidatedSpecs.push(...chunkSpecs);
   }
 
-  if (validatedSpecs.length === 0) {
-    const err = new Error(
-      `PACKAGING_INCOMPLETE: Stage 6 LLM failed to return complete visual specifications after 3 attempts (${lastMissingDetail}).`
-    ) as Error & { code: string; statusCode: number };
-    err.code = 'PACKAGING_INCOMPLETE';
-    err.statusCode = 422;
-    throw err;
-  }
-
-  const llmMap = new Map<number, SlotVisualSpec>();
-  for (const spec of validatedSpecs) {
-    llmMap.set(Number(spec.slotIndex), spec);
+  const specMap = new Map<number, SlotVisualSpec>();
+  for (const s of allValidatedSpecs) {
+    specMap.set(s.slotIndex, s);
   }
 
   const fullVisualSpecs: SlotVisualSpec[] = s5.slots.map((slot, idx) => {
-    const fromLlm = llmMap.get(slot.slotIndex) || validatedSpecs[idx % validatedSpecs.length];
+    const fromLlm = specMap.get(slot.slotIndex) || allValidatedSpecs[idx % allValidatedSpecs.length];
     const cleanSubject = fromLlm.subjectDescription.replace(
       /\bAU\s*-?\s*\d+[A-Z]?\b/gi,
       'anatomical micro-expression'
@@ -195,6 +238,7 @@ export async function handleGenerateVisualPrompts(
       environmentDescription: fromLlm.environmentDescription,
       actionTrajectory: cleanAction,
       emotionTag: fromLlm.emotionTag,
+      frameType: fromLlm.frameType,
       lightingSpec:
         fromLlm.lightingSpec ||
         lockedDna?.visualDirection?.lighting?.[0] ||
@@ -208,13 +252,22 @@ export async function handleGenerateVisualPrompts(
     (lockedDna as any)?.visuals ??
     (lockedDna as any)?.visual;
   const formatPreset = (lockedDna as any)?.formatPreset as NarrativeFormatPresetId | undefined;
+
+  const profile = (masterState.extracted as any)?.profile;
   const stylePrefix =
+    profile?.stylePrefix?.value ||
     dnaVisual?.stylePrefix ||
     (formatPreset && FORMAT_PRESET_DEFAULT_STYLE_PREFIXES[formatPreset]) ||
     NEUTRAL_STYLE_PREFIX;
 
+  const characterAnchor =
+    profile?.characterAnchor?.value ||
+    (lockedDna as any)?.characterAnchor ||
+    undefined;
+
   const extraNegativePrompts = Array.from(
     new Set([
+      ...(profile?.negatives ?? []),
       ...masterState.extracted.negativePrompts,
       ...(lockedDna?.visuals?.negativePrompts ?? []),
       ...((dnaVisual as any)?.negativePrompts ?? []),
@@ -228,6 +281,9 @@ export async function handleGenerateVisualPrompts(
     extraNegativePrompts,
     defaultLightingHint: dnaVisual?.lighting?.[0],
     stylePrefix,
+    flowNatural: true,
+    characterAnchor,
+    noCliFlags: true,
   });
 
   for (const p of prompts) {

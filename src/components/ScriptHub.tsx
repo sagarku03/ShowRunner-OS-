@@ -87,7 +87,7 @@ export const ScriptHub: React.FC<ScriptHubProps> = ({
 
   const rawS4 = (stateVector?.context?.S4?.payload as S4StagePayload | null) ?? null;
   const s4Payload =
-    rawS4 && typeof rawS4.wordCount === 'number' && typeof rawS4.actualDurationSec === 'number'
+    rawS4 && Array.isArray(rawS4.words) && typeof rawS4.actualDurationSec === 'number'
       ? rawS4
       : null;
 

@@ -109,6 +109,8 @@ export function enforceKineticVerbCap(
   };
 }
 
+export type VisualFrameType = 'PROTAGONIST' | 'OBJECT' | 'SCENIC';
+
 export interface SlotVisualSpec {
   slotIndex: number;
   subjectDescription: string;
@@ -116,6 +118,7 @@ export interface SlotVisualSpec {
   actionTrajectory: string;
   emotionTag: keyof typeof FACS_EMOTION_PROSE_MAP | string;
   lightingSpec?: string;
+  frameType?: VisualFrameType;
 }
 
 export interface AssembledFlowPrompt {
@@ -141,6 +144,9 @@ export function assembleFlowPrompts(params: {
   defaultLightingHint?: string;
   stylePrefix?: string;
   lightingPreference?: string;
+  flowNatural?: boolean;
+  characterAnchor?: string;
+  noCliFlags?: boolean;
 }): AssembledFlowPrompt[] {
   const {
     slots,
@@ -150,6 +156,9 @@ export function assembleFlowPrompts(params: {
     defaultLightingHint,
     stylePrefix,
     lightingPreference,
+    flowNatural = false,
+    characterAnchor,
+    noCliFlags = false,
   } = params;
   const results: AssembledFlowPrompt[] = [];
   let prevVector: [number, number, number] = CAMERA_RIG_VECTORS[0].vector;
@@ -159,9 +168,18 @@ export function assembleFlowPrompts(params: {
   const effectivePrefix = trimmedPrefix || NEUTRAL_STYLE_PREFIX;
   const styleSource: 'DNA' | 'NEUTRAL_DEFAULT' = hasCustomStyle ? 'DNA' : 'NEUTRAL_DEFAULT';
 
+  const cleanNegativeItem = (s: string): string => {
+    let t = stripRawAuCodes(String(s));
+    // Strip CLI flags like --no, --ar 16:9, --v 6, etc.
+    t = t.replace(/--(?:no|ar|v|stylize|s|chaos)\b[^\s,]*/gi, '').trim();
+    t = t.replace(/^--no\s+/i, '').replace(/^[,\s]+|[,\s]+$/g, '').trim();
+    return t;
+  };
+
   const extraNegClean = (extraNegativePrompts ?? [])
-    .map((s) => stripRawAuCodes(String(s)).replace(/^--no\s+/i, '').trim())
+    .map(cleanNegativeItem)
     .filter(Boolean);
+
   const fullNegativeSuffix =
     extraNegClean.length > 0
       ? `${R5_NEGATIVE_PROMPT_SUFFIX}, ${extraNegClean.join(', ')}`
@@ -193,19 +211,20 @@ export function assembleFlowPrompts(params: {
       stripRawAuCodes(spec.actionTrajectory)
     );
 
-    const cleanSubject = stripRawAuCodes(spec.subjectDescription);
-    const cleanEnv = stripRawAuCodes(spec.environmentDescription);
-    const lighting = stripRawAuCodes(
+    let cleanSubject = stripRawAuCodes(spec.subjectDescription);
+    let cleanEnv = stripRawAuCodes(spec.environmentDescription);
+    let lighting = stripRawAuCodes(
       lightingPreference ??
         spec.lightingSpec ??
         defaultLightingHint ??
         NEUTRAL_LIGHTING
     );
 
-    const timingDirective =
-      mode === 'MODE_1_IMAGE' || mode === 'MODE_1'
-        ? `Static high-resolution keyframe hold (${slot.durationSec.toFixed(2)}s) with ${slot.actionSec.toFixed(2)}s primary focal emphasis and ${slot.holdSec.toFixed(2)}s residual atmospheric settle, camera holds a steady residual micro-tension frame`
-        : `Continuous ${slot.durationSec.toFixed(2)}s shot: primary kinetic action completes within 0.00s-${slot.actionSec.toFixed(2)}s (${cappedAction}), followed by a ${slot.holdSec.toFixed(2)}s micro-tension residual hold (${slot.actionSec.toFixed(2)}s-${slot.durationSec.toFixed(2)}s) where the camera holds a steady residual micro-tension frame`;
+    if (noCliFlags || flowNatural) {
+      cleanSubject = cleanSubject.replace(/--(?:no|ar|v|stylize|s|chaos)\b[^\s,]*/gi, '').trim();
+      cleanEnv = cleanEnv.replace(/--(?:no|ar|v|stylize|s|chaos)\b[^\s,]*/gi, '').trim();
+      lighting = lighting.replace(/--(?:no|ar|v|stylize|s|chaos)\b[^\s,]*/gi, '').trim();
+    }
 
     const startTag =
       slot.timestampTag && /^#\[\d{2,}-\d{2}\.\d{3}\]$/.test(slot.timestampTag)
@@ -219,19 +238,96 @@ export function assembleFlowPrompts(params: {
     const isMode2 = mode === 'MODE_2_CONTINUOUS' || mode === 'MODE_2' || mode === 'MODE_2_VIDEO';
     const mode2Tag = isMode2 ? ` @start:${startTag}` : '';
 
-    const singleLinePrompt = [
-      `${startTag} ${effectivePrefix},`,
-      `${selectedRig.description}.`,
-      `Subject: ${cleanSubject}, exhibiting ${facsProse}.`,
-      `Environment: ${cleanEnv}.`,
-      `Motion & Pacing: ${timingDirective}.`,
-      `Lighting: ${lighting}.${mode2Tag}`,
-      fullNegativeSuffix,
-    ]
-      .join(' ')
-      .replace(/\r?\n+/g, ' ')
-      .replace(/\s{2,}/g, ' ')
-      .trim();
+    let singleLinePrompt: string;
+
+    if (flowNatural) {
+      // Natural prompt syntax:
+      // #[MM-SS.mmm] <style prefix> <character anchor + pose | object + (no human figure in frame) | scenic + (no stickman in frame)>. <environment>. <lighting>. Widescreen 16:9 composition. Avoid <negatives>.
+      const frameType = spec.frameType || 'PROTAGONIST';
+      let subjectClause = cleanSubject;
+
+      if (frameType === 'OBJECT') {
+        const marker = '(no human figure in frame)';
+        subjectClause = subjectClause.includes(marker) ? subjectClause : `${subjectClause}, ${marker}`;
+      } else if (frameType === 'SCENIC') {
+        const marker = '(no stickman in frame)';
+        subjectClause = subjectClause.includes(marker) ? subjectClause : `${subjectClause}, ${marker}`;
+      } else {
+        // PROTAGONIST
+        if (characterAnchor && characterAnchor.trim()) {
+          const anchorTrim = characterAnchor.trim();
+          if (!subjectClause.toLowerCase().includes(anchorTrim.toLowerCase().slice(0, 15))) {
+            subjectClause = `${anchorTrim}, ${subjectClause}`;
+          }
+        }
+      }
+
+      const ensurePeriod = (text: string) => {
+        const t = text.trim().replace(/[.,;]+$/, '');
+        return t ? `${t}.` : '';
+      };
+
+      const styleClause = effectivePrefix.trim().replace(/,+$/, '');
+      const subjectFormatted = ensurePeriod(subjectClause);
+      const envFormatted = ensurePeriod(cleanEnv);
+      const lightFormatted = ensurePeriod(lighting);
+
+      // Negatives for flowNatural:
+      const negItems = [
+        ...extraNegClean,
+        '3D render',
+        'CGI animation',
+        'photorealism',
+        'airbrushed',
+        'unrendered vectors',
+        'low quality',
+        'watermark',
+      ];
+      // Deduplicate case-insensitively
+      const seenNegs = new Set<string>();
+      const uniqueNegs: string[] = [];
+      for (const item of negItems) {
+        const key = item.toLowerCase();
+        if (!seenNegs.has(key)) {
+          seenNegs.add(key);
+          uniqueNegs.push(item);
+        }
+      }
+      const avoidClause = `Avoid ${uniqueNegs.join(', ')}.`;
+
+      singleLinePrompt = [
+        `${startTag} ${styleClause} ${subjectFormatted}`,
+        envFormatted,
+        lightFormatted,
+        'Widescreen 16:9 composition.',
+        avoidClause,
+        mode2Tag ? mode2Tag.trim() : '',
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .replace(/\r?\n+/g, ' ')
+        .replace(/\s{2,}/g, ' ')
+        .trim();
+    } else {
+      const timingDirective =
+        mode === 'MODE_1_IMAGE' || mode === 'MODE_1'
+          ? `Static high-resolution keyframe hold (${slot.durationSec.toFixed(2)}s) with ${slot.actionSec.toFixed(2)}s primary focal emphasis and ${slot.holdSec.toFixed(2)}s residual atmospheric settle, camera holds a steady residual micro-tension frame`
+          : `Continuous ${slot.durationSec.toFixed(2)}s shot: primary kinetic action completes within 0.00s-${slot.actionSec.toFixed(2)}s (${cappedAction}), followed by a ${slot.holdSec.toFixed(2)}s micro-tension residual hold (${slot.actionSec.toFixed(2)}s-${slot.durationSec.toFixed(2)}s) where the camera holds a steady residual micro-tension frame`;
+
+      singleLinePrompt = [
+        `${startTag} ${effectivePrefix},`,
+        `${selectedRig.description}.`,
+        `Subject: ${cleanSubject}, exhibiting ${facsProse}.`,
+        `Environment: ${cleanEnv}.`,
+        `Motion & Pacing: ${timingDirective}.`,
+        `Lighting: ${lighting}.${mode2Tag}`,
+        fullNegativeSuffix,
+      ]
+        .join(' ')
+        .replace(/\r?\n+/g, ' ')
+        .replace(/\s{2,}/g, ' ')
+        .trim();
+    }
 
     results.push({
       slotIndex: slot.slotIndex,

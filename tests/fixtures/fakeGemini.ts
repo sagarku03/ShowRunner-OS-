@@ -945,15 +945,16 @@ export class FakeGeminiGateway implements GeminiGateway {
         };
       }
 
-      const slotMatches = Array.from(req.userPrompt.matchAll(/Slot #(\d+)/g)).map((m) =>
-        Number(m[1])
-      );
+      const slotMatches = Array.from(
+        req.userPrompt.matchAll(/(?:"slotIndex":\s*(\d+)|Slot #(\d+))/g)
+      ).map((m) => Number(m[1] || m[2]));
       const indices =
         slotMatches.length > 0
           ? slotMatches
           : Array.from({ length: 30 }, (_, idx) => idx + 1);
 
       const emotions = ['TENSION', 'DREAD', 'URGENCY', 'REVELATION', 'ISOLATION', 'AWE'];
+      const frameTypes: Array<'PROTAGONIST' | 'OBJECT' | 'SCENIC'> = ['PROTAGONIST', 'OBJECT', 'SCENIC'];
       const visualSpecs = indices.map((slotIndex, idx) => ({
         slotIndex,
         subjectDescription: `Forensic macro view of neural clock circuit #${slotIndex}`,
@@ -961,6 +962,7 @@ export class FakeGeminiGateway implements GeminiGateway {
         actionTrajectory: 'smooth dolly push toward the oscillating core',
         emotionTag: emotions[idx % emotions.length],
         lightingSpec: 'High-contrast chiaroscuro rim lighting',
+        frameType: frameTypes[idx % frameTypes.length],
       }));
       return {
         data: { visualSpecs } as unknown as T,

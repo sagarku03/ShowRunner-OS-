@@ -32,6 +32,8 @@ CREATE TABLE IF NOT EXISTS projects (
   master_prompt TEXT,
   master_prompt_extracted_json TEXT,
   dna_version INTEGER DEFAULT 0,
+  entry_mode TEXT NOT NULL DEFAULT 'FULL',
+  transcript_meta_json TEXT,
   epoch INTEGER NOT NULL DEFAULT 1,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -154,4 +156,11 @@ CREATE TABLE IF NOT EXISTS jobs (
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS thumbnail_vision_cache (
+  hash TEXT PRIMARY KEY,
+  video_id TEXT NOT NULL,
+  specs_json TEXT NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );

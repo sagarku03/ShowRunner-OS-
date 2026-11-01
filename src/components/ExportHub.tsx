@@ -16,6 +16,15 @@ import type {
   S7StagePayload,
 } from '../types/showrunner.ts';
 import { apiRequest, downloadBundleZip } from '../utils/apiClient.ts';
+import {
+  allBatchFiles,
+  allPackFiles,
+  allPromptsFile,
+  batchToFile,
+  packToFile,
+  safeSlug,
+} from '../../shared/rules/exportFiles.ts';
+import { copyText, downloadFilesAsZip, downloadTextFile } from '../utils/download.ts';
 
 interface ExportHubProps {
   activeProject: ProjectItem | null;
@@ -124,9 +133,14 @@ export const ExportHub: React.FC<ExportHubProps> = ({
     }
   };
 
-  const copyToClipboard = (text: string, label: string) => {
-    void navigator.clipboard?.writeText(text);
-    onNotify(`${label} copied`, 'success');
+
+  const copyToClipboard = async (text: string, label: string) => {
+    const success = await copyText(text);
+    if (success) {
+      onNotify(`${label} copied`, 'success');
+    } else {
+      onNotify(`Failed to copy ${label} to clipboard`, 'error');
+    }
   };
 
   return (
@@ -179,7 +193,7 @@ export const ExportHub: React.FC<ExportHubProps> = ({
         </button>
 
         {s6Payload && (
-          <div className="space-y-3 pt-1">
+          <div className="space-y-4 pt-1">
             {s6Payload.styleSource === 'NEUTRAL_DEFAULT' && (
               <div className="px-3 py-1.5 rounded-xl bg-amber-500/10 border border-amber-500/25 text-[11px] text-amber-200 font-mono">
                 Default style – set DNA to customise
@@ -193,6 +207,80 @@ export const ExportHub: React.FC<ExportHubProps> = ({
                 Batches (30/card): <strong className="text-emerald-400">{s6Payload.totalBatches}</strong> • Packs (100/file):{' '}
                 <strong className="text-violet-300">{s6Payload.packCount}</strong>
               </span>
+            </div>
+
+            {/* Bulk All N Prompts Export Bar (B2) */}
+            <div className="liquid-glass-subtle p-4 space-y-3 rounded-2xl border border-violet-500/30">
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <div className="flex items-center gap-2">
+                  <Download className="w-4 h-4 text-violet-400" />
+                  <span className="text-xs font-semibold text-white">
+                    Bulk Prompt Export: All {s6Payload.totalPrompts} Prompts
+                  </span>
+                </div>
+                <span className="text-[10px] text-slate-400 font-mono">
+                  1 prompt/line • 1 blank line between • No BOM
+                </span>
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const file = allPromptsFile(s6Payload.prompts, activeProject?.name);
+                    const ok = await copyText(file.content);
+                    if (ok) {
+                      onNotify(`Copied all ${s6Payload.totalPrompts} prompts to clipboard`, 'success');
+                    } else {
+                      onNotify('Failed to copy prompts to clipboard', 'error');
+                    }
+                  }}
+                  className="min-h-[44px] py-2.5 px-3 rounded-xl bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/30 text-xs font-semibold flex items-center justify-center gap-1.5 active:scale-[0.97]"
+                >
+                  <Copy className="w-3.5 h-3.5" />
+                  Copy ALL
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    const file = allPromptsFile(s6Payload.prompts, activeProject?.name);
+                    downloadTextFile(file.fileName, file.content);
+                    onNotify(`Downloaded ${file.fileName}`, 'success');
+                  }}
+                  className="min-h-[44px] py-2.5 px-3 rounded-xl bg-violet-500/20 hover:bg-violet-500/30 text-violet-300 border border-violet-500/30 text-xs font-semibold flex items-center justify-center gap-1.5 active:scale-[0.97]"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  Download ALL (.txt)
+                </button>
+
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const files = allBatchFiles(s6Payload.batches || [], activeProject?.name);
+                    const slug = safeSlug(activeProject?.name);
+                    await downloadFilesAsZip(`${slug}_all_batches.zip`, files);
+                    onNotify(`Downloaded ${files.length} batches as ZIP`, 'success');
+                  }}
+                  className="min-h-[44px] py-2.5 px-3 rounded-xl bg-sky-500/20 hover:bg-sky-500/30 text-sky-300 border border-sky-500/30 text-xs font-semibold flex items-center justify-center gap-1.5 active:scale-[0.97]"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  All 30-batches (.zip)
+                </button>
+
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const files = allPackFiles(s6Payload.packs || [], activeProject?.name);
+                    const slug = safeSlug(activeProject?.name);
+                    await downloadFilesAsZip(`${slug}_all_packs.zip`, files);
+                    onNotify(`Downloaded ${files.length} packs as ZIP`, 'success');
+                  }}
+                  className="min-h-[44px] py-2.5 px-3 rounded-xl bg-fuchsia-500/20 hover:bg-fuchsia-500/30 text-fuchsia-300 border border-fuchsia-500/30 text-xs font-semibold flex items-center justify-center gap-1.5 active:scale-[0.97]"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  All 100-packs (.zip)
+                </button>
+              </div>
             </div>
 
             {/* 30-Prompt Batch Cards */}
@@ -212,14 +300,29 @@ export const ExportHub: React.FC<ExportHubProps> = ({
                         Slots #{batch.startSlotIndex}–#{batch.endSlotIndex} ({batch.promptCount} prompts)
                       </div>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => copyToClipboard(batch.content, batch.label)}
-                      className="px-2.5 py-1.5 rounded-xl bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-xs font-semibold flex items-center gap-1 active:scale-[0.97]"
-                    >
-                      <Copy className="w-3.5 h-3.5" />
-                      Copy
-                    </button>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => copyToClipboard(batch.content, batch.label)}
+                        className="min-h-[44px] px-3 py-1.5 rounded-xl bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-xs font-semibold flex items-center gap-1 active:scale-[0.97]"
+                      >
+                        <Copy className="w-3.5 h-3.5" />
+                        Copy
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const file = batchToFile(batch, activeProject?.name);
+                          downloadTextFile(file.fileName, file.content);
+                          onNotify(`Downloaded ${file.fileName}`, 'success');
+                        }}
+                        className="min-h-[44px] px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-white/10 text-xs font-semibold flex items-center gap-1 active:scale-[0.97]"
+                        title="Download batch as .txt"
+                      >
+                        <Download className="w-3.5 h-3.5 text-emerald-400" />
+                        .txt
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -248,16 +351,29 @@ export const ExportHub: React.FC<ExportHubProps> = ({
                     <button
                       type="button"
                       onClick={() => copyToClipboard(pack.content, pack.fileName)}
-                      className="px-2.5 py-1.5 rounded-xl bg-white/10 text-slate-200 text-xs flex items-center gap-1"
+                      className="min-h-[44px] px-3 py-1.5 rounded-xl bg-white/10 text-slate-200 text-xs flex items-center gap-1 active:scale-[0.97]"
                     >
                       <Copy className="w-3.5 h-3.5" />
                       Copy
                     </button>
                     <button
                       type="button"
+                      onClick={() => {
+                        const file = packToFile(pack, activeProject?.name);
+                        downloadTextFile(file.fileName, file.content);
+                        onNotify(`Downloaded ${file.fileName}`, 'success');
+                      }}
+                      className="min-h-[44px] px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-white/10 text-xs font-semibold flex items-center gap-1 active:scale-[0.97]"
+                      title="Download pack as .txt"
+                    >
+                      <Download className="w-3.5 h-3.5 text-violet-400" />
+                      .txt
+                    </button>
+                    <button
+                      type="button"
                       onClick={() => handlePushPackToBridge(pack.packIndex)}
                       disabled={pushingPack === pack.packIndex}
-                      className="px-2.5 py-1.5 rounded-xl bg-violet-500/20 text-violet-300 border border-violet-500/30 text-xs font-semibold flex items-center gap-1"
+                      className="min-h-[44px] px-3 py-1.5 rounded-xl bg-violet-500/20 text-violet-300 border border-violet-500/30 text-xs font-semibold flex items-center gap-1 active:scale-[0.97]"
                     >
                       <Send className="w-3.5 h-3.5" />
                       Push

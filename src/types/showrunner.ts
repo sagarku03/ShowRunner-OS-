@@ -70,6 +70,8 @@ export interface ModelDiscoveryData {
   recommendedEmbedding: string | null;
 }
 
+import type { MasterPromptProfile } from '../../shared/rules/masterPromptProfile.ts';
+
 export interface MasterPromptExtraction {
   persona: string;
   customChapters: string[];
@@ -77,12 +79,15 @@ export interface MasterPromptExtraction {
   negativePrompts: string[];
   toneWords: string[];
   bannedWords: string[];
+  profile?: MasterPromptProfile;
+  insertedBlacklistIds?: number[];
 }
 
 export interface MasterPromptState {
   text: string;
   isUniversalMode: boolean;
-  modeBadge: string;
+  modeBadge?: string;
+  modeLabel?: string;
   extracted: MasterPromptExtraction;
   extractionError?: string | null;
 }
@@ -96,7 +101,7 @@ export interface DnaEvidenceCitation {
 export interface ChannelDnaRecord {
   version: number;
   lockedAt: string;
-  source: 'CHANNEL' | 'NICHE' | 'HYBRID' | 'EXPRESS' | 'ANALYSED';
+  source: 'CHANNEL' | 'NICHE' | 'HYBRID' | 'EXPRESS' | 'ANALYSED' | 'MASTER_PROMPT';
   fidelity: number;
   channelMeta?: {
     id: string;
